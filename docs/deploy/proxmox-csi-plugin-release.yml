@@ -444,6 +444,7 @@ spec:
             - "--enable-capacity"
             - "--capacity-ownerref-level=2"
             - "--default-fstype=ext4"
+            - "--extra-create-metadata"
           env:
             - name: NAMESPACE
               valueFrom:

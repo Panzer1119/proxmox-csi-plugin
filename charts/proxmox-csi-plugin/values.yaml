@@ -151,6 +151,7 @@ controller:
     # example: --feature-gates=VolumeAttributesClass=true
     args:
       - --default-fstype=ext4
+      - --extra-create-metadata
     # -- Provisioner resource requests and limits.
     # ref: https://kubernetes.io/docs/user-guide/compute-resources/
     resources:
