@@ -113,7 +113,7 @@ controller:
   plugin:
     # -- Controller CSI Driver.
     image:
-      repository: ghcr.io/sergelogvinov/proxmox-csi-controller
+      repository: ghcr.io/panzer1119/proxmox-csi-controller
       pullPolicy: IfNotPresent
       # Overrides the image tag whose default is the chart appVersion.
       tag: ""
@@ -195,7 +195,7 @@ node:
   plugin:
     # -- Node CSI Driver.
     image:
-      repository: ghcr.io/sergelogvinov/proxmox-csi-node
+      repository: ghcr.io/panzer1119/proxmox-csi-node
       pullPolicy: IfNotPresent
       # Overrides the image tag whose default is the chart appVersion.
       tag: ""
@@ -267,7 +267,7 @@ livenessprobe:
 initContainers: []
   # - name: loadbalancer
   #   restartPolicy: Always
-  #   image: ghcr.io/sergelogvinov/haproxy:2.8.3-alpine3.18
+  #   image: ghcr.io/panzer1119/haproxy:2.8.3-alpine3.18
   #   imagePullPolicy: IfNotPresent
   #   env:
   #     - name: SVC

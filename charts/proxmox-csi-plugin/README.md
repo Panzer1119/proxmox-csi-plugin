@@ -91,7 +91,7 @@ kubectl create ns csi-proxmox
 kubectl label ns csi-proxmox pod-security.kubernetes.io/enforce=privileged
 # Install Proxmox CSI plugin
 helm upgrade -i --namespace=csi-proxmox -f proxmox-csi.yaml \
-    proxmox-csi-plugin oci://ghcr.io/sergelogvinov/charts/proxmox-csi-plugin
+    proxmox-csi-plugin oci://ghcr.io/panzer1119/charts/proxmox-csi-plugin
 ```
 
 ## Values
@@ -117,7 +117,7 @@ helm upgrade -i --namespace=csi-proxmox -f proxmox-csi.yaml \
 | storageClass | list | `[]` | Storage class definition. |
 | controller.podAnnotations | object | `{}` | Annotations for controller pod. ref: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/ |
 | controller.podLabels | object | `{}` | Labels for controller pod. ref: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/ |
-| controller.plugin.image | object | `{"pullPolicy":"IfNotPresent","repository":"ghcr.io/sergelogvinov/proxmox-csi-controller","tag":""}` | Controller CSI Driver. |
+| controller.plugin.image | object | `{"pullPolicy":"IfNotPresent","repository":"ghcr.io/panzer1119/proxmox-csi-controller","tag":""}` | Controller CSI Driver. |
 | controller.plugin.resources | object | `{"requests":{"cpu":"10m","memory":"16Mi"}}` | Controller resource requests and limits. ref: https://kubernetes.io/docs/user-guide/compute-resources/ |
 | controller.attacher.image | object | `{"pullPolicy":"IfNotPresent","repository":"registry.k8s.io/sig-storage/csi-attacher","tag":"v4.10.0"}` | CSI Attacher. ref: https://github.com/kubernetes-csi/external-attacher |
 | controller.attacher.args | list | `["--default-fstype=ext4"]` | Attacher arguments. example: --default-fstype=ext4 |
@@ -132,7 +132,7 @@ helm upgrade -i --namespace=csi-proxmox -f proxmox-csi.yaml \
 | controller.snapshotter.image | object | `{"pullPolicy":"IfNotPresent","repository":"registry.k8s.io/sig-storage/csi-snapshotter","tag":"v8.3.0"}` | CSI Snapshotter. refs: https://github.com/kubernetes-csi/external-snapshotter |
 | controller.snapshotter.args | list | `[]` | Snapshotter arguments. example: --feature-gates=CSIVolumeGroupSnapshot=true |
 | controller.snapshotter.resources | object | `{"requests":{"cpu":"10m","memory":"16Mi"}}` | Snapshotter resource requests and limits. ref: https://kubernetes.io/docs/user-guide/compute-resources/ |
-| node.plugin.image | object | `{"pullPolicy":"IfNotPresent","repository":"ghcr.io/sergelogvinov/proxmox-csi-node","tag":""}` | Node CSI Driver. |
+| node.plugin.image | object | `{"pullPolicy":"IfNotPresent","repository":"ghcr.io/panzer1119/proxmox-csi-node","tag":""}` | Node CSI Driver. |
 | node.plugin.resources | object | `{}` | Node CSI Driver resource requests and limits. ref: https://kubernetes.io/docs/user-guide/compute-resources/ |
 | node.driverRegistrar.image | object | `{"pullPolicy":"IfNotPresent","repository":"registry.k8s.io/sig-storage/csi-node-driver-registrar","tag":"v2.15.0"}` | Node CSI driver registrar. ref: https://github.com/kubernetes-csi/node-driver-registrar |
 | node.driverRegistrar.args | list | `[]` | Driver registrar arguments. example: --timeout=60s |
