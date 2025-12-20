@@ -34,7 +34,7 @@ snapshot:
 # dockers:
 #   - use: buildx
 #     image_templates:
-#       - ghcr.io/sergelogvinov/pvecsictl:{{ .Version }}-amd64
+#       - ghcr.io/panzer1119/pvecsictl:{{ .Version }}-amd64
 #     goos: linux
 #     goarch: amd64
 #     build_flag_templates:
@@ -43,7 +43,7 @@ snapshot:
 #       - "--platform=linux/amd64"
 #   - use: buildx
 #     image_templates:
-#       - ghcr.io/sergelogvinov/pvecsictl:{{ .Version }}-arm64
+#       - ghcr.io/panzer1119/pvecsictl:{{ .Version }}-arm64
 #     goos: linux
 #     goarch: arm64
 #     build_flag_templates:
@@ -51,10 +51,10 @@ snapshot:
 #       - "--target=pvecsictl-goreleaser"
 #       - "--platform=linux/arm64"
 # docker_manifests:
-#   - name_template: ghcr.io/sergelogvinov/{{ .ProjectName }}:{{ .Version }}
+#   - name_template: ghcr.io/panzer1119/{{ .ProjectName }}:{{ .Version }}
 #     image_templates:
-#       - ghcr.io/sergelogvinov/{{ .ProjectName }}:{{ .Version }}-amd64
-#       - ghcr.io/sergelogvinov/{{ .ProjectName }}:{{ .Version }}-arm64
+#       - ghcr.io/panzer1119/{{ .ProjectName }}:{{ .Version }}-amd64
+#       - ghcr.io/panzer1119/{{ .ProjectName }}:{{ .Version }}-arm64
 
 homebrew_casks:
   - name: pvecsictl

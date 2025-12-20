@@ -260,7 +260,7 @@ spec:
               - DAC_OVERRIDE
             seccompProfile:
               type: RuntimeDefault
-          image: "ghcr.io/sergelogvinov/proxmox-csi-node:edge"
+          image: "ghcr.io/panzer1119/proxmox-csi-node:edge"
           imagePullPolicy: Always
           args:
             - "-v=5"
@@ -412,7 +412,7 @@ spec:
             readOnlyRootFilesystem: true
             seccompProfile:
               type: RuntimeDefault
-          image: "ghcr.io/sergelogvinov/proxmox-csi-controller:edge"
+          image: "ghcr.io/panzer1119/proxmox-csi-controller:edge"
           imagePullPolicy: Always
           args:
             - "-v=5"

@@ -146,7 +146,7 @@ storageClass:
 Install the plugin. You need to prepare the `csi-proxmox` namespace first, see above
 
 ```shell
-helm upgrade -i -n csi-proxmox -f proxmox-csi.yaml proxmox-csi-plugin oci://ghcr.io/sergelogvinov/charts/proxmox-csi-plugin
+helm upgrade -i -n csi-proxmox -f proxmox-csi.yaml proxmox-csi-plugin oci://ghcr.io/panzer1119/charts/proxmox-csi-plugin
 ```
 
 #### Option for k0s
