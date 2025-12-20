@@ -5,67 +5,48 @@ import (
 	"regexp"
 	"strings"
 
-	"context"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	"github.com/container-storage-interface/spec/lib/go/csi"
+	"k8s.io/klog/v2"
 )
 
 const (
-	PVCVolumeNameAnnotationKeys = DriverName + "/volumeName"
+	// Provided by external-provisioner when started with --extra-create-metadata
+	pvcNameParamKey      = "csi.storage.k8s.io/pvc/name"
+	pvcNamespaceParamKey = "csi.storage.k8s.io/pvc/namespace"
 )
 
 var volumeNameAllowed = regexp.MustCompile(`[^a-z0-9-]+`)
 
-func resolveProvisionedVolumeName(ctx context.Context, kclient kubernetes.Interface, pvName string) (string, error) {
-	// pvName is request.GetName() (usually "pvc-<uuid>") and is always available.
-	if kclient == nil {
-		return pvName, nil
-	}
+func resolveProvisionedVolumeName(request *csi.CreateVolumeRequest) (string, error) {
+	// This is usually "pvc-<uuid>" and is always available.
+	pvName := request.GetName()
+	klog.V(5).InfoS("resolveProvisionedVolumeName: pvName", pvName)
 
-	// Try PVC annotation (requires Kubernetes API lookup)
-	if name, err := volumeNameFromPVCAnnotation(ctx, kclient, pvName); err != nil {
-		return "", err
-	} else if strings.TrimSpace(name) != "" {
+	// Prefer extra-create-metadata parameters (no API lookup required)
+	if name, ok := volumeNameFromRequestParameters(request); ok {
+		klog.V(5).InfoS("resolveProvisionedVolumeName: name", name)
 		return buildProvisionedName(name)
 	}
+
+	// Fallback to provisioner-generated PV name
 	return pvName, nil
 }
 
-func volumeNameFromPVCAnnotation(ctx context.Context, kclient kubernetes.Interface, pvName string) (string, error) {
-	pv, err := kclient.CoreV1().PersistentVolumes().Get(ctx, pvName, metav1.GetOptions{})
-	if err != nil {
-		// If we cannot read the PV, just ignore and fall back.
-		return "", nil
+func volumeNameFromRequestParameters(request *csi.CreateVolumeRequest) (string, bool) {
+	params := request.GetParameters()
+	if params == nil {
+		return "", false
 	}
 
-	if pv.Spec.ClaimRef == nil {
-		return "", nil
-	}
-
-	ns := pv.Spec.ClaimRef.Namespace
-	name := pv.Spec.ClaimRef.Name
+	ns := strings.TrimSpace(params[pvcNamespaceParamKey])
+	name := strings.TrimSpace(params[pvcNameParamKey])
+	klog.V(5).InfoS("volumeNameFromRequestParameters: ns", ns, "name", name)
 	if ns == "" || name == "" {
-		return "", nil
-	}
-
-	pvc, err := kclient.CoreV1().PersistentVolumeClaims(ns).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return "", nil
-	}
-
-	ann := pvc.GetAnnotations()
-	if ann == nil {
-		return "", nil
-	}
-
-	base := strings.TrimSpace(ann[PVCVolumeNameAnnotationKeys])
-	if base == "" {
-		return "", nil
+		return "", false
 	}
 
 	// Include namespace to reduce collisions across namespaces.
-	return fmt.Sprintf("pvc-%s-%s", ns, base), nil
+	return fmt.Sprintf("pvc-%s-%s", ns, name), true
 }
 
 func buildProvisionedName(name string) (string, error) {
