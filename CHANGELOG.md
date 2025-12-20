@@ -5,6 +5,13 @@
 
 * enable support for capmox ([6145c7d](https://github.com/sergelogvinov/proxmox-csi-plugin/commit/6145c7d91cfc47c131ac453e2a90a915e5694b2b))
 
+## [0.17.30](https://github.com/sergelogvinov/proxmox-csi-plugin/compare/v0.17.0...v0.17.30) (2025-12-20)
+
+
+### Features
+
+* resolve volume name from PVC annotations ([e36d7f1](https://github.com/Panzer1119/proxmox-csi-plugin/commit/e36d7f19692e51408602c46e6533ed465b5d6d66))
+
 ## [0.17.0](https://github.com/sergelogvinov/proxmox-csi-plugin/compare/v0.16.0...v0.17.0) (2025-12-13)
 
 

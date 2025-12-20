@@ -1,6 +1,6 @@
 # proxmox-csi-plugin
 
-![Version: 0.5.3](https://img.shields.io/badge/Version-0.5.3-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v0.17.0](https://img.shields.io/badge/AppVersion-v0.17.0-informational?style=flat-square)
+![Version: 0.5.33](https://img.shields.io/badge/Version-0.5.33-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v0.17.30](https://img.shields.io/badge/AppVersion-v0.17.30-informational?style=flat-square)
 
 Container Storage Interface plugin for Proxmox
 
