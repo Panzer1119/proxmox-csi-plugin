@@ -122,8 +122,8 @@ func (d *ControllerService) Init() {
 func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	klog.V(4).InfoS("CreateVolume: called", "args", protosanitizer.StripSecrets(request))
 
-	pvc := request.GetName()
-	if len(pvc) == 0 {
+	pvName := request.GetName()
+	if len(pvName) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "VolumeName must be provided")
 	}
 
@@ -133,6 +133,12 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 	}
 
 	params, err := ExtractParameters(request.GetParameters())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// Resolve the actual disk name suffix. By default, this is the PV name (usually pvc-<uuid>).
+	pvc, err := resolveProvisionedVolumeName(ctx, d.kclient, pvName)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
