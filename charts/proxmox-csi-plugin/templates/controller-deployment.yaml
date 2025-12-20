@@ -103,7 +103,6 @@ spec:
             {{- if .Values.options.enableCapacity }}
             - "--enable-capacity"
             - "--capacity-ownerref-level=2"
-            - "--extra-create-metadata"
             {{- end }}
             {{- range .Values.controller.provisioner.args }}
             - {{ . | quote }}
