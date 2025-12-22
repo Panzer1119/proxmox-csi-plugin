@@ -5,12 +5,12 @@
 
 * enable support for capmox ([6145c7d](https://github.com/sergelogvinov/proxmox-csi-plugin/commit/6145c7d91cfc47c131ac453e2a90a915e5694b2b))
 
-## [0.17.30](https://github.com/sergelogvinov/proxmox-csi-plugin/compare/v0.17.0...v0.17.30) (2025-12-20)
+## [0.17.32](https://github.com/sergelogvinov/proxmox-csi-plugin/compare/v0.17.31...v0.17.32) (2025-12-20)
 
 
 ### Features
 
-* resolve volume name from PVC annotations ([e36d7f1](https://github.com/Panzer1119/proxmox-csi-plugin/commit/e36d7f19692e51408602c46e6533ed465b5d6d66))
+* Add volume name prefix and suffix parameters to volume naming ([1a1bd07](https://github.com/Panzer1119/proxmox-csi-plugin/commit/1a1bd070cc4aa325d3425d87ef68b068985102ff))
 
 ## [0.17.31](https://github.com/sergelogvinov/proxmox-csi-plugin/compare/v0.17.30...v0.17.31) (2025-12-20)
 
@@ -18,6 +18,13 @@
 ### Features
 
 * Enable extract-create-metadata ([6a13615](https://github.com/Panzer1119/proxmox-csi-plugin/commit/6a136155c4526f535bb92dd2c915768bcb9ebc64))
+
+## [0.17.30](https://github.com/sergelogvinov/proxmox-csi-plugin/compare/v0.17.0...v0.17.30) (2025-12-20)
+
+
+### Features
+
+* resolve volume name from PVC annotations ([e36d7f1](https://github.com/Panzer1119/proxmox-csi-plugin/commit/e36d7f19692e51408602c46e6533ed465b5d6d66))
 
 ## [0.17.0](https://github.com/sergelogvinov/proxmox-csi-plugin/compare/v0.16.0...v0.17.0) (2025-12-13)
 
