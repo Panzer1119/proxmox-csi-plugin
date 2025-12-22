@@ -37,6 +37,9 @@ func volumeNameFromRequestParameters(request *csi.CreateVolumeRequest) (string, 
 	if params == nil {
 		return "", false
 	}
+	namePrefix := strings.TrimSpace(params["volumeNamePrefix"])
+	nameSuffix := strings.TrimSpace(params["volumeNameSuffix"])
+	klog.V(5).InfoS("volumeNameFromRequestParameters: namePrefix", namePrefix, "nameSuffix", nameSuffix)
 
 	ns := strings.TrimSpace(params[pvcNamespaceParamKey])
 	name := strings.TrimSpace(params[pvcNameParamKey])
@@ -46,7 +49,7 @@ func volumeNameFromRequestParameters(request *csi.CreateVolumeRequest) (string, 
 	}
 
 	// Include namespace to reduce collisions across namespaces.
-	return fmt.Sprintf("pvc-%s-%s", ns, name), true
+	return fmt.Sprintf("%spvc-%s-%s%s", namePrefix, ns, name, nameSuffix), true
 }
 
 func buildProvisionedName(name string) (string, error) {

@@ -77,6 +77,9 @@ type StorageParameters struct {
 
 	ResizeRequired  *bool `json:"resizeRequired,omitempty"`
 	ResizeSizeBytes int64 `json:"resizeSizeBytes,omitempty"`
+
+	VolumeNamePrefix string `json:"volumeNamePrefix,omitempty"`
+	VolumeNameSuffix string `json:"volumeNameSuffix,omitempty"`
 }
 
 // ModifyVolumeParameters contains parameters to modify a volume
