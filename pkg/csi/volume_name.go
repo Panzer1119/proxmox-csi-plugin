@@ -49,7 +49,7 @@ func volumeNameFromRequestParameters(request *csi.CreateVolumeRequest) (string, 
 	}
 
 	// Include namespace to reduce collisions across namespaces.
-	return fmt.Sprintf("%spvc-%s-%s%s", namePrefix, ns, name, nameSuffix), true
+	return fmt.Sprintf("%sns-%s--pvc-%s%s", namePrefix, ns, name, nameSuffix), true
 }
 
 func buildProvisionedName(name string) (string, error) {
