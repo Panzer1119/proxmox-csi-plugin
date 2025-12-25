@@ -283,6 +283,10 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 
 	id := vmID
 
+	if params.VMID != nil && *params.VMID > 0 {
+		id = *params.VMID
+	}
+
 	if params.Replicate {
 		if storageConfig.PluginType != "zfspool" {
 			return nil, status.Error(codes.Internal, "error: storage type is not zfs in replication mode")
