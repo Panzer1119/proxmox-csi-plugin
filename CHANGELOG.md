@@ -5,6 +5,13 @@
 
 * enable support for capmox ([6145c7d](https://github.com/sergelogvinov/proxmox-csi-plugin/commit/6145c7d91cfc47c131ac453e2a90a915e5694b2b))
 
+## [0.17.34](https://github.com/sergelogvinov/proxmox-csi-plugin/compare/v0.17.31...v0.17.32) (2025-12-20)
+
+
+### Features
+
+* Make VM ID customizable (instead of defaulting to 9999) ([84ef14c](https://github.com/Panzer1119/proxmox-csi-plugin/commit/84ef14c0a78717d79dbb57a575de6651b82929d5))
+
 ## [0.17.33](https://github.com/sergelogvinov/proxmox-csi-plugin/compare/v0.17.31...v0.17.32) (2025-12-20)
 
 
