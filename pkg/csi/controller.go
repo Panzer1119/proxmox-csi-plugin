@@ -122,7 +122,7 @@ func (d *ControllerService) Init() {
 func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	klog.V(4).InfoS("CreateVolume: called", "args", protosanitizer.StripSecrets(request))
 
-	pvc := request.GetName()
+	pvc, _ := resolveProvisionedVolumeName(request)
 	if len(pvc) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "VolumeName must be provided")
 	}
