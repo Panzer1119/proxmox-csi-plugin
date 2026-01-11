@@ -96,7 +96,7 @@ Region is the Proxmox cluster name in cloud config.
 See [Node Annotations and Labels](docs/options-node.md) for more details.
 
 The labels can be set manually using `kubectl`,
-or automatically through a tool like [Proxmox CCM](https://github.com/sergelogvinov/proxmox-cloud-controller-manager).
+or automatically through a tool like [Proxmox CCM](https://github.com/panzer1119/proxmox-cloud-controller-manager).
 I recommend using the CCM (Cloud Controller Manager).
 
 ### Storage Class Definition
@@ -133,7 +133,7 @@ For more detailed options and a comprehensive understanding, refer to the follow
 Deploy a test Pod
 
 ```shell
-kubectl apply -f https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/docs/deploy/test-pod-ephemeral.yaml
+kubectl apply -f https://raw.githubusercontent.com/panzer1119/proxmox-csi-plugin/main/docs/deploy/test-pod-ephemeral.yaml
 ```
 
 Check status of PV and PVC
@@ -179,7 +179,7 @@ Source:
 ### StatefulSet with persistent storage
 
 ```shell
-kubectl apply -f https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/docs/deploy/test-statefulset.yaml
+kubectl apply -f https://raw.githubusercontent.com/panzer1119/proxmox-csi-plugin/main/docs/deploy/test-statefulset.yaml
 ```
 
 Check status of PV and PVC
@@ -278,8 +278,8 @@ See [FAQ](docs/faq.md) for answers to common questions.
 * https://pve.proxmox.com/wiki/Manual:_qm.conf
 * https://pve.proxmox.com/wiki/Performance_Tweaks
 * https://kb.blockbridge.com/guide/proxmox/
-* https://github.com/sergelogvinov/ansible-role-proxmox
-* https://github.com/sergelogvinov/terraform-talos/tree/main/proxmox
+* https://github.com/panzer1119/ansible-role-proxmox
+* https://github.com/panzer1119/terraform-talos/tree/main/proxmox
 
 ## Contributing
 

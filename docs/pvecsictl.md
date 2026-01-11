@@ -10,7 +10,7 @@ The commands and flags may change in the future.
 It works on macOS (Intel/ARM) and Linux (amd64/arm64)
 
 ```shell
-brew install sergelogvinov/tap/pvecsictl
+brew install panzer1119/tap/pvecsictl
 ```
 
 RBAC permissions required for the tool

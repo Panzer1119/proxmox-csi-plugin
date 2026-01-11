@@ -59,17 +59,17 @@ snapshot:
 homebrew_casks:
   - name: pvecsictl
     directory: Casks
-    homepage: https://github.com/sergelogvinov/proxmox-csi-plugin
+    homepage: https://github.com/panzer1119/proxmox-csi-plugin
     description: "Proxmox VE CSI Mutate tool"
     license: Apache-2.0
     # conflicts:
     #   - formula: pvecsictl
 
     commit_author:
-      name: sergelogvinov
-      email: 5407715+sergelogvinov@users.noreply.github.com
+      name: panzer1119
+      email: 5407715+panzer1119@users.noreply.github.com
     repository:
-      owner: sergelogvinov
+      owner: panzer1119
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TOKEN }}"

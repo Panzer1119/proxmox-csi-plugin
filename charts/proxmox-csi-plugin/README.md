@@ -15,17 +15,17 @@ Supported storage types:
 - NFS
 - Ceph
 
-**Homepage:** <https://github.com/sergelogvinov/proxmox-csi-plugin>
+**Homepage:** <https://github.com/panzer1119/proxmox-csi-plugin>
 
 ## Maintainers
 
 | Name | Email | Url |
 | ---- | ------ | --- |
-| sergelogvinov |  | <https://github.com/sergelogvinov> |
+| panzer1119 |  | <https://github.com/panzer1119> |
 
 ## Source Code
 
-* <https://github.com/sergelogvinov/proxmox-csi-plugin>
+* <https://github.com/panzer1119/proxmox-csi-plugin>
 
 ## Proxmox permissions
 

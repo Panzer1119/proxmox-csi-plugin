@@ -55,7 +55,7 @@ existingConfigSecretKey: config.yaml
 configFile: /etc/proxmox/config.yaml
 
 # -- Proxmox cluster config.
-# ref: https://github.com/sergelogvinov/proxmox-csi-plugin/blob/main/docs/install.md
+# ref: https://github.com/panzer1119/proxmox-csi-plugin/blob/main/docs/install.md
 config:
   features:
     # specify provider: proxmox if you are using capmox (cluster api provider for proxmox)

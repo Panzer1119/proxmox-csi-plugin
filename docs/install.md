@@ -45,7 +45,7 @@ kubectl label nodes region1-node-1 topology.kubernetes.io/zone=pve-1
 > Note: All nodes provisioned by Proxmox CSI Plugin should be labeled.
 
 
-Alternatively, you can use [Proxmox Cloud Controller Manager](https://github.com/sergelogvinov/proxmox-cloud-controller-manager). Proxmox CCM will manage topology labels for you.
+Alternatively, you can use [Proxmox Cloud Controller Manager](https://github.com/panzer1119/proxmox-cloud-controller-manager). Proxmox CCM will manage topology labels for you.
 
 
 ## Install CSI Driver
@@ -103,13 +103,13 @@ kubectl -n csi-proxmox create secret generic proxmox-csi-plugin --from-file=conf
 Install latest release version
 
 ```shell
-kubectl apply -f https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin-release.yml
+kubectl apply -f https://raw.githubusercontent.com/panzer1119/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin-release.yml
 ```
 
 Or install latest stable version (edge)
 
 ```shell
-kubectl apply -f https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin.yml
+kubectl apply -f https://raw.githubusercontent.com/panzer1119/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin.yml
 ```
 
 ### Install the plugin by using Helm

@@ -3,10 +3,10 @@ apiVersion: v2
 name: proxmox-csi-plugin
 description: Container Storage Interface plugin for Proxmox
 type: application
-home: https://github.com/sergelogvinov/proxmox-csi-plugin
-icon: https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/charts/proxmox-csi-plugin/icon.png
+home: https://github.com/panzer1119/proxmox-csi-plugin
+icon: https://raw.githubusercontent.com/panzer1119/proxmox-csi-plugin/main/charts/proxmox-csi-plugin/icon.png
 sources:
-  - https://github.com/sergelogvinov/proxmox-csi-plugin
+  - https://github.com/panzer1119/proxmox-csi-plugin
 keywords:
   - csi
   - storage
@@ -14,8 +14,8 @@ keywords:
   - volume
   - proxmox
 maintainers:
-  - name: sergelogvinov
-    url: https://github.com/sergelogvinov
+  - name: panzer1119
+    url: https://github.com/panzer1119
 #
 # Versions are expected to follow Semantic Versioning (https://semver.org/)
 version: 0.6.0
