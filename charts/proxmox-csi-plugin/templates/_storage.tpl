@@ -13,4 +13,10 @@ ssd: {{ .ssd | quote }}
 {{- with .vmID }}
 vmID: {{ . | quote }}
 {{- end }}
+{{- with .volumeNamePrefix }}
+volumeNamePrefix: {{ . | quote }}
+{{- end }}
+{{- with .volumeNameSuffix }}
+volumeNameSuffix: {{ . | quote }}
+{{- end }}
 {{- end }}

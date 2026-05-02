@@ -48,6 +48,9 @@ parameters:
 
   ## Optional: VM ID
   vmID: "3000"
+  ## Optional: Prefix and suffix for the created disk name
+  volumeNamePrefix: "my-prefix-"
+  volumeNameSuffix: "-my-suffix"
 
 # Optional: This field allows you to specify additional mount options to be applied when the volume is mounted on the node
 mountOptions:
@@ -127,6 +130,8 @@ metadata:
 * `replicateZones` - zones where the disk will be replicated, separated by commas, support up to 2 zones
 
 * `vmID` - optional VM ID for the created disk (default: `9999`)
+* `volumeNamePrefix` - optional prefix for the created disk (default: empty)
+* `volumeNameSuffix` - optional suffix for the created disk (default: empty)
 
 ## AllowVolumeExpansion
 

@@ -80,6 +80,10 @@ storageClass: []
   #
   #   vmID: 3000
   #
+  #   # Prefix and suffix for the generated volume name. The generated name will be <prefix><generated-name><suffix>.
+  #   volumeNamePrefix: "pvc-"
+  #   volumeNameSuffix: ""
+  #
   #   extraParameters:
   #     # https://kubernetes-csi.github.io/docs/secrets-and-credentials-storage-class.html
   #     csi.storage.k8s.io/node-stage-secret-name: "proxmox-csi-secret"
