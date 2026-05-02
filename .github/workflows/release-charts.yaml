@@ -40,4 +40,5 @@ jobs:
         timeout-minutes: 5
         run: make helm-login helm-release
         env:
+          USERNAME: ${{ github.repository_owner }}
           HELM_TOKEN: ${{ secrets.GITHUB_TOKEN }}

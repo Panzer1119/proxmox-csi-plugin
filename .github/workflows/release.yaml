@@ -41,22 +41,27 @@ jobs:
         timeout-minutes: 10
         run: make images
         env:
+          USERNAME: ${{ github.repository_owner }}
           PUSH: "true"
           TAG: "edge"
       - name: Sign images
         timeout-minutes: 4
         run: make images-cosign
         env:
+          USERNAME: ${{ github.repository_owner }}
           TAG: "edge"
 
       - name: Build and push
         timeout-minutes: 10
         run: make images
         env:
+          USERNAME: ${{ github.repository_owner }}
           PUSH: "true"
       - name: Sign images
         timeout-minutes: 4
         run: make images-cosign
+        env:
+          USERNAME: ${{ github.repository_owner }}
 
   build-publish-cli:
     name: "Publish cli tool"
