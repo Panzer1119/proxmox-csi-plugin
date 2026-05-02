@@ -10,4 +10,7 @@ cache: {{ . }}
 {{- if .ssd }}
 ssd: {{ .ssd | quote }}
 {{- end }}
+{{- with .vmID }}
+vmID: {{ . | quote }}
+{{- end }}
 {{- end }}

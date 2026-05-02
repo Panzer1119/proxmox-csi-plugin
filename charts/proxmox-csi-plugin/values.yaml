@@ -77,6 +77,9 @@ storageClass: []
   #   # https://pve.proxmox.com/wiki/Performance_Tweaks
   #   cache: directsync|none|writeback|writethrough
   #   ssd: true
+  #
+  #   vmID: 3000
+  #
   #   extraParameters:
   #     # https://kubernetes-csi.github.io/docs/secrets-and-credentials-storage-class.html
   #     csi.storage.k8s.io/node-stage-secret-name: "proxmox-csi-secret"

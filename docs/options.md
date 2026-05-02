@@ -46,6 +46,9 @@ parameters:
   replicateSchedule: "*/15"
   replicateZones: "pve-1,pve-3"
 
+  ## Optional: VM ID
+  vmID: "3000"
+
 # Optional: This field allows you to specify additional mount options to be applied when the volume is mounted on the node
 mountOptions:
   # Common for ssd
@@ -122,6 +125,8 @@ metadata:
 * `replicate` - set true if you want to replicate the disk to another zone
 * `replicateSchedule` - replication schedule [in systemd calendar format](https://pve.proxmox.com/pve-docs/pve-admin-guide.html#pvesr_schedule_time_format) (default: `*/15`)
 * `replicateZones` - zones where the disk will be replicated, separated by commas, support up to 2 zones
+
+* `vmID` - optional VM ID for the created disk (default: `9999`)
 
 ## AllowVolumeExpansion
 
