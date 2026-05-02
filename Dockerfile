@@ -26,7 +26,7 @@ RUN make build-all-archs
 ########################################
 
 FROM --platform=${TARGETARCH} scratch AS proxmox-csi-controller
-LABEL org.opencontainers.image.source="https://github.com/sergelogvinov/proxmox-csi-plugin" \
+LABEL org.opencontainers.image.source="https://github.com/Panzer1119/proxmox-csi-plugin" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="Proxmox VE CSI plugin"
 
@@ -67,7 +67,7 @@ RUN /tools/deps-check.sh
 ########################################
 
 FROM --platform=${TARGETARCH} scratch AS proxmox-csi-node
-LABEL org.opencontainers.image.source="https://github.com/sergelogvinov/proxmox-csi-plugin" \
+LABEL org.opencontainers.image.source="https://github.com/Panzer1119/proxmox-csi-plugin" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="Proxmox VE CSI plugin"
 
@@ -82,7 +82,7 @@ ENTRYPOINT ["/bin/proxmox-csi-node"]
 ########################################
 
 FROM alpine:3.23 AS pvecsictl
-LABEL org.opencontainers.image.source="https://github.com/sergelogvinov/proxmox-csi-plugin" \
+LABEL org.opencontainers.image.source="https://github.com/Panzer1119/proxmox-csi-plugin" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="Proxmox VE CSI tools"
 
@@ -94,7 +94,7 @@ ENTRYPOINT ["/bin/pvecsictl"]
 ########################################
 
 FROM alpine:3.23 AS pvecsictl-goreleaser
-LABEL org.opencontainers.image.source="https://github.com/sergelogvinov/proxmox-csi-plugin" \
+LABEL org.opencontainers.image.source="https://github.com/Panzer1119/proxmox-csi-plugin" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="Proxmox VE CSI tools"
 
