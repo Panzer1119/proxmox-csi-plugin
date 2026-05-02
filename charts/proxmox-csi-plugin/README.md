@@ -123,7 +123,7 @@ helm upgrade -i --namespace=csi-proxmox -f proxmox-csi.yaml \
 | controller.attacher.args | list | `["--default-fstype=ext4"]` | Attacher arguments. example: --default-fstype=ext4 |
 | controller.attacher.resources | object | `{"requests":{"cpu":"10m","memory":"16Mi"}}` | Attacher resource requests and limits. ref: https://kubernetes.io/docs/user-guide/compute-resources/ |
 | controller.provisioner.image | object | `{"pullPolicy":"IfNotPresent","repository":"registry.k8s.io/sig-storage/csi-provisioner","tag":"v5.3.0"}` | CSI Provisioner. ref: https://github.com/kubernetes-csi/external-provisioner |
-| controller.provisioner.args | list | `["--default-fstype=ext4"]` | Provisioner arguments. example: --feature-gates=VolumeAttributesClass=true |
+| controller.provisioner.args | list | `["--default-fstype=ext4","--extra-create-metadata"]` | Provisioner arguments. example: --feature-gates=VolumeAttributesClass=true |
 | controller.provisioner.resources | object | `{"requests":{"cpu":"10m","memory":"16Mi"}}` | Provisioner resource requests and limits. ref: https://kubernetes.io/docs/user-guide/compute-resources/ |
 | controller.resizer.image | object | `{"pullPolicy":"IfNotPresent","repository":"registry.k8s.io/sig-storage/csi-resizer","tag":"v1.14.0"}` | CSI Resizer. refs: https://github.com/kubernetes-csi/external-resizer |
 | controller.resizer.args | list | `[]` | Resizer arguments. example: --feature-gates=VolumeAttributesClass=true |

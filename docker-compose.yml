@@ -96,7 +96,7 @@ services:
       - "--enable-capacity"
       - "--capacity-ownerref-level=-1"
       - "--capacity-poll-interval=2m"
-      # - "--extra-create-metadata=true"
+      - "--extra-create-metadata"
       # - "--node-deployment"
       - "--kubeconfig=/etc/kubernetes/kubeconfig"
     environment:
