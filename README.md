@@ -133,7 +133,7 @@ For more detailed options and a comprehensive understanding, refer to the follow
 Deploy a test Pod
 
 ```shell
-kubectl apply -f https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/docs/deploy/test-pod-ephemeral.yaml
+kubectl apply -f https://raw.githubusercontent.com/Panzer1119/proxmox-csi-plugin/main/docs/deploy/test-pod-ephemeral.yaml
 ```
 
 Check status of PV and PVC
@@ -179,7 +179,7 @@ Source:
 ### StatefulSet with persistent storage
 
 ```shell
-kubectl apply -f https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/docs/deploy/test-statefulset.yaml
+kubectl apply -f https://raw.githubusercontent.com/Panzer1119/proxmox-csi-plugin/main/docs/deploy/test-statefulset.yaml
 ```
 
 Check status of PV and PVC

@@ -146,13 +146,13 @@ kubectl -n csi-proxmox create secret generic proxmox-csi-plugin --from-file=conf
 Install latest release version
 
 ```shell
-kubectl apply -f https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin-release.yml
+kubectl apply -f https://raw.githubusercontent.com/Panzer1119/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin-release.yml
 ```
 
 Or install latest stable version (edge)
 
 ```shell
-kubectl apply -f https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin.yml
+kubectl apply -f https://raw.githubusercontent.com/Panzer1119/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin.yml
 ```
 
 ### Install the plugin by using Helm
@@ -189,7 +189,7 @@ storageClass:
 Install the plugin. You need to prepare the `csi-proxmox` namespace first, see above
 
 ```shell
-helm upgrade -i -n csi-proxmox -f proxmox-csi.yaml proxmox-csi-plugin oci://ghcr.io/sergelogvinov/charts/proxmox-csi-plugin
+helm upgrade -i -n csi-proxmox -f proxmox-csi.yaml proxmox-csi-plugin oci://ghcr.io/panzer1119/charts/proxmox-csi-plugin
 ```
 
 #### Option for k0s
@@ -217,7 +217,7 @@ cluster:
   externalCloudProvider:
     enabled: true
     manifests:
-      - https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin.yml
+      - https://raw.githubusercontent.com/Panzer1119/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin.yml
 ```
 
 Or all together with the Proxmox Cloud Controller Manager
@@ -264,5 +264,5 @@ cluster:
     enabled: true
     manifests:
       - https://raw.githubusercontent.com/sergelogvinov/proxmox-cloud-controller-manager/main/docs/deploy/cloud-controller-manager.yml
-      - https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin.yml
+      - https://raw.githubusercontent.com/Panzer1119/proxmox-csi-plugin/main/docs/deploy/proxmox-csi-plugin.yml
 ```
