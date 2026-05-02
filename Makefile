@@ -1,7 +1,8 @@
 REGISTRY ?= ghcr.io
 USERNAME ?= sergelogvinov
-OCIREPO ?= $(REGISTRY)/$(USERNAME)
-HELMREPO ?= $(REGISTRY)/$(USERNAME)/charts
+USERNAME_LOWER := $(shell echo $(USERNAME) | tr '[:upper:]' '[:lower:]')
+OCIREPO ?= $(REGISTRY)/$(USERNAME_LOWER)
+HELMREPO ?= $(REGISTRY)/$(USERNAME_LOWER)/charts
 PLATFORM ?= linux/arm64,linux/amd64
 PUSH ?= false
 
