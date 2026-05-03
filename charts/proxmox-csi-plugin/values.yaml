@@ -331,8 +331,6 @@ updateStrategy:
   rollingUpdate:
     maxUnavailable: 1
 
-# -- Prometheus metrics
-
 # -- Topology dashboard settings.
 dashboard:
   # -- Enable built-in topology dashboard server in controller.
@@ -344,6 +342,7 @@ dashboard:
   # -- Service port exposed by the controller pod when dashboard is enabled.
   port: 8088
 
+# -- Prometheus metrics
 metrics:
   # -- Enable Prometheus metrics.
   enabled: false
