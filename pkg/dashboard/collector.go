@@ -10,6 +10,7 @@ import (
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/csi"
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/proxmoxpool"
 	volutil "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/volume"
+	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -95,6 +96,7 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 	}
 
 	pods, _ := c.kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	log.Debugf("collector: pods returned: %d", len(pods.Items))
 	nodeSeen := map[string]bool{}
 	for _, p := range pods.Items {
 		podHas := false
