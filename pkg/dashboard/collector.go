@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/csi"
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/proxmoxpool"
+	volutil "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/volume"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -21,114 +21,123 @@ type Collector struct {
 
 func (c *Collector) Collect(ctx context.Context, store *Store) error {
 	ss := Snapshot{GeneratedAt: time.Now().UTC()}
-
 	pvs, _ := c.kube.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
-	relevantPVs := map[string]string{} // pvName -> volumeHandle
-	relevantVM := map[string]map[int]bool{}
+	pvByName := map[string]string{}
+	volByPV := map[string]*volutil.Volume{}
+	regionsWanted := map[string]bool{}
+	zonesWanted := map[string]map[string]bool{}
 	for _, pv := range pvs.Items {
-		if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != csi.DriverName || pv.Spec.CSI.VolumeHandle == "" {
+		if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != csi.DriverName {
 			continue
 		}
-		relevantPVs[pv.Name] = pv.Spec.CSI.VolumeHandle
-		parts := strings.Split(pv.Spec.CSI.VolumeHandle, "/")
-		if len(parts) >= 2 {
-			if vmid, err := strconv.Atoi(parts[1]); err == nil {
-				if relevantVM[parts[0]] == nil {
-					relevantVM[parts[0]] = map[int]bool{}
-				}
-				relevantVM[parts[0]][vmid] = true
-			}
+		v, err := volutil.NewVolumeFromVolumeID(pv.Spec.CSI.VolumeHandle)
+		if err != nil {
+			continue
+		}
+		pvByName[pv.Name] = pv.Spec.CSI.VolumeHandle
+		volByPV[pv.Name] = v
+		regionsWanted[v.Region()] = true
+		if zonesWanted[v.Region()] == nil {
+			zonesWanted[v.Region()] = map[string]bool{}
+		}
+		if v.Zone() != "" {
+			zonesWanted[v.Region()][v.Zone()] = true
 		}
 	}
-
-	if len(relevantPVs) == 0 {
+	if len(pvByName) == 0 {
 		store.Set(ss)
 		return nil
 	}
 
-	nodes, _ := c.kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	k8sNodeToRegion := map[string]string{}
-	k8sNodeToZone := map[string]string{}
-	for _, n := range nodes.Items {
-		k8sNodeToRegion[n.Name] = n.Labels[csi.ProxmoxRegion]
-		k8sNodeToZone[n.Name] = n.Labels[csi.ProxmoxNode]
+	// Kubernetes storage classes for this driver.
+	scs, _ := c.kube.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
+	for _, sc := range scs.Items {
+		if sc.Provisioner == csi.DriverName {
+			ss.Nodes = append(ss.Nodes, Node{ID: "sc:" + sc.Name, Kind: "storageclass", Shape: "diamond", Name: sc.Name, Group: "kubernetes", Status: "active"})
+		}
 	}
 
 	pvcs, _ := c.kube.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{})
+	relPVC := map[string]bool{}
 	for _, pvc := range pvcs.Items {
-		if _, ok := relevantPVs[pvc.Spec.VolumeName]; !ok {
+		id := pvc.Namespace + "/" + pvc.Name
+		pvName := pvc.Spec.VolumeName
+		if pvName == "" { // unbound but class belongs to our driver
+			if pvc.Spec.StorageClassName != nil && hasSC(ss.Nodes, *pvc.Spec.StorageClassName) {
+				relPVC[id] = true
+			}
+		} else if _, ok := pvByName[pvName]; ok {
+			relPVC[id] = true
+		}
+		if !relPVC[id] {
 			continue
 		}
-		pvcID := "pvc:" + pvc.Namespace + ":" + pvc.Name
-		ss.Nodes = append(ss.Nodes, Node{ID: pvcID, Kind: "pvc", Name: pvc.Name, Group: "k8s/ns:" + pvc.Namespace, Status: string(pvc.Status.Phase)})
-		ss.Edges = append(ss.Edges, Edge{From: pvcID, To: "pv:" + pvc.Spec.VolumeName, Kind: "binds"})
+		nid := "pvc:" + id
+		ss.Nodes = append(ss.Nodes, Node{ID: nid, Kind: "pvc", Shape: "hex", Name: pvc.Name, Group: "kubernetes", Status: string(pvc.Status.Phase), Metadata: map[string]string{"namespace": pvc.Namespace}})
+		if pvName != "" {
+			ss.Edges = append(ss.Edges, Edge{From: nid, To: "pv:" + pvName, Kind: "binds"})
+		}
 	}
 
-	for _, pv := range pvs.Items {
-		volHandle, ok := relevantPVs[pv.Name]
-		if !ok {
-			continue
+	for pvName, handle := range pvByName {
+		v := volByPV[pvName]
+		pvID := "pv:" + pvName
+		diskID := "disk:" + v.Region() + "/" + v.Zone() + "/" + v.Storage() + "/" + v.Disk()
+		kind := "local-disk"
+		parent := "zone:" + v.Region() + "/" + v.Zone()
+		if v.Zone() == "" {
+			kind = "shared-disk"
+			parent = "region:" + v.Region()
 		}
-		pvID := "pv:" + pv.Name
-		volID := "volume:" + pv.Name
-		ss.Nodes = append(ss.Nodes, Node{ID: pvID, Kind: "pv", Name: pv.Name, Group: "k8s/volumes", Status: string(pv.Status.Phase)})
-		ss.Nodes = append(ss.Nodes, Node{ID: volID, Kind: "volume", Name: volHandle, Group: "proxmox/disks", Status: "known"})
-		ss.Edges = append(ss.Edges, Edge{From: pvID, To: volID, Kind: "backed-by"})
+		ss.Nodes = append(ss.Nodes, Node{ID: pvID, Kind: "pv", Shape: "circle", Name: pvName, Group: "kubernetes", Status: "bound", Metadata: map[string]string{"volumeHandle": handle}})
+		ss.Nodes = append(ss.Nodes, Node{ID: diskID, ParentID: parent, Kind: kind, Shape: "cylinder", Name: v.VolID(), Group: "proxmox", Status: "known"})
+		ss.Edges = append(ss.Edges, Edge{From: pvID, To: diskID, Kind: "backs"})
 	}
 
 	pods, _ := c.kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	nodeSeen := map[string]bool{}
 	for _, p := range pods.Items {
-		linked := false
-		for _, v := range p.Spec.Volumes {
-			if v.PersistentVolumeClaim == nil {
-				continue
-			}
-			for _, pvc := range pvcs.Items {
-				if pvc.Namespace == p.Namespace && pvc.Name == v.PersistentVolumeClaim.ClaimName {
-					if _, ok := relevantPVs[pvc.Spec.VolumeName]; ok {
-						linked = true
-					}
-				}
+		podHas := false
+		for _, vol := range p.Spec.Volumes {
+			if vol.PersistentVolumeClaim != nil && relPVC[p.Namespace+"/"+vol.PersistentVolumeClaim.ClaimName] {
+				podHas = true
 			}
 		}
-		if !linked {
+		if !podHas {
 			continue
 		}
-		nodeGroup := "k8s/node:" + p.Spec.NodeName
-		pid := "pod:" + p.Namespace + ":" + p.Name
-		ss.Nodes = append(ss.Nodes, Node{ID: "k8s-node:" + p.Spec.NodeName, Kind: "k8s-node", Name: p.Spec.NodeName, Group: "k8s/cluster", Status: "known", Metadata: map[string]string{"region": k8sNodeToRegion[p.Spec.NodeName], "zone": k8sNodeToZone[p.Spec.NodeName]}})
-		ss.Nodes = append(ss.Nodes, Node{ID: pid, Kind: "pod", Name: p.Name, Group: nodeGroup, Status: string(p.Status.Phase)})
-		ss.Edges = append(ss.Edges, Edge{From: "k8s-node:" + p.Spec.NodeName, To: pid, Kind: "schedules"})
-		for _, v := range p.Spec.Volumes {
-			if v.PersistentVolumeClaim != nil {
-				ss.Edges = append(ss.Edges, Edge{From: pid, To: "pvc:" + p.Namespace + ":" + v.PersistentVolumeClaim.ClaimName, Kind: "mounts"})
+		nodeID := "k8s-node:" + p.Spec.NodeName
+		if !nodeSeen[nodeID] {
+			nodeSeen[nodeID] = true
+			ss.Nodes = append(ss.Nodes, Node{ID: nodeID, Kind: "k8s-node", Shape: "square", Name: p.Spec.NodeName, Group: "kubernetes", Status: "ready"})
+		}
+		vmID := "vm:" + p.Spec.NodeName
+		ss.Nodes = append(ss.Nodes, Node{ID: vmID, Kind: "vm-workload", ParentID: nodeID, Shape: "square", Name: p.Spec.NodeName, Group: "kubernetes", Status: "active"})
+		podID := "pod:" + p.Namespace + "/" + p.Name
+		ss.Nodes = append(ss.Nodes, Node{ID: podID, Kind: "pod", ParentID: vmID, Shape: "square", Name: p.Name, Group: "kubernetes", Status: string(p.Status.Phase)})
+		ss.Edges = append(ss.Edges, Edge{From: nodeID, To: podID, Kind: "runs"})
+		for _, vol := range p.Spec.Volumes {
+			if vol.PersistentVolumeClaim != nil {
+				ss.Edges = append(ss.Edges, Edge{From: podID, To: "pvc:" + p.Namespace + "/" + vol.PersistentVolumeClaim.ClaimName, Kind: "mounts"})
 			}
 		}
 	}
 
-	attachments, _ := c.kube.StorageV1().VolumeAttachments().List(ctx, metav1.ListOptions{})
-	for _, a := range attachments.Items {
-		if a.Spec.Source.PersistentVolumeName == nil {
+	for region := range regionsWanted {
+		rid := "region:" + region
+		ss.Nodes = append(ss.Nodes, Node{ID: rid, Kind: "region", Shape: "square", Name: region, Group: "proxmox", Status: "active"})
+		if zonesWanted[region] == nil {
 			continue
 		}
-		if _, ok := relevantPVs[*a.Spec.Source.PersistentVolumeName]; !ok {
-			continue
+		for zone := range zonesWanted[region] {
+			zid := "zone:" + region + "/" + zone
+			ss.Nodes = append(ss.Nodes, Node{ID: zid, ParentID: rid, Kind: "zone", Shape: "square", Name: zone, Group: "proxmox", Status: "active"})
+			ss.Edges = append(ss.Edges, Edge{From: rid, To: zid, Kind: "contains"})
 		}
-		aid := "va:" + a.Name
-		ss.Nodes = append(ss.Nodes, Node{ID: aid, Kind: "volumeattachment", Name: a.Name, Group: "k8s/attachments", Status: map[bool]string{true: "attached", false: "pending"}[a.Status.Attached]})
-		ss.Edges = append(ss.Edges, Edge{From: aid, To: "pv:" + *a.Spec.Source.PersistentVolumeName, Kind: "attaches"})
-		ss.Edges = append(ss.Edges, Edge{From: aid, To: "k8s-node:" + a.Spec.NodeName, Kind: "targets"})
 	}
 
-	regions := c.proxmox.GetRegions()
-	sort.Strings(regions)
-	for _, region := range regions {
-		regionWanted := len(relevantVM[region]) > 0
-		if !regionWanted {
-			continue
-		}
-		regionID := "region:" + region
-		ss.Nodes = append(ss.Nodes, Node{ID: regionID, Kind: "proxmox-region", Name: region, Group: "proxmox", Status: "ready"})
+	// Match proxmox VMs/LXCs by zone and include only resources tied to relevant zones.
+	for region := range regionsWanted {
 		px, err := c.proxmox.GetProxmoxCluster(region)
 		if err != nil {
 			continue
@@ -137,79 +146,54 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 		if err != nil {
 			continue
 		}
-		resources, err := cl.Resources(ctx, "")
+		res, err := cl.Resources(ctx, "")
 		if err != nil {
 			continue
 		}
-		zoneSeen := map[string]bool{}
-		for _, r := range resources {
-			if r.Type == "qemu" || r.Type == "lxc" {
-				if !relevantVM[region][int(r.VMID)] {
-					continue
-				}
-				zoneID := "pve-node:" + region + ":" + r.Node
-				if !zoneSeen[zoneID] {
-					ss.Nodes = append(ss.Nodes, Node{ID: zoneID, Kind: "proxmox-node", Name: r.Node, Group: "region:" + region, Status: "ready"})
-					ss.Edges = append(ss.Edges, Edge{From: regionID, To: zoneID, Kind: "contains"})
-					zoneSeen[zoneID] = true
-				}
-				vmID := fmt.Sprintf("vm:%s:%d", region, r.VMID)
-				kind := "vm"
-				if r.Type == "lxc" {
-					kind = "container"
-				}
-				ss.Nodes = append(ss.Nodes, Node{ID: vmID, Kind: kind, Name: r.Name, Group: zoneID, Status: r.Status})
-				ss.Edges = append(ss.Edges, Edge{From: zoneID, To: vmID, Kind: "runs"})
+		for _, r := range res {
+			if (r.Type != "qemu" && r.Type != "lxc") || !zonesWanted[region][r.Node] {
+				continue
 			}
-			if r.Type == "storage" {
-				for vmid := range relevantVM[region] {
-					vmID := fmt.Sprintf("vm:%s:%d", region, vmid)
-					diskID := "volume:" + strconv.Itoa(vmid)
-					_ = vmID
-					_ = diskID
-				}
-			}
+			id := fmt.Sprintf("pve-vm:%s/%d", region, r.VMID)
+			ss.Nodes = append(ss.Nodes, Node{ID: id, ParentID: "zone:" + region + "/" + r.Node, Kind: r.Type, Shape: "square", Name: r.Name, Group: "proxmox", Status: r.Status})
 		}
-	}
-
-	// bind proxmox volume handles back to VM nodes for hierarchy region->zone->vm->disk.
-	for pvName, handle := range relevantPVs {
-		parts := strings.Split(handle, "/")
-		if len(parts) < 2 {
-			continue
-		}
-		vmid, err := strconv.Atoi(parts[1])
-		if err != nil {
-			continue
-		}
-		ss.Edges = append(ss.Edges, Edge{From: "volume:" + pvName, To: fmt.Sprintf("vm:%s:%d", parts[0], vmid), Kind: "attached-to"})
 	}
 
 	store.Set(dedup(ss))
 	return nil
 }
 
+func hasSC(nodes []Node, name string) bool {
+	for _, n := range nodes {
+		if n.Kind == "storageclass" && n.Name == name {
+			return true
+		}
+	}
+	return false
+}
 func dedup(in Snapshot) Snapshot {
-	nodes := make([]Node, 0, len(in.Nodes))
-	nseen := map[string]bool{}
+	nm := map[string]Node{}
 	for _, n := range in.Nodes {
-		if n.ID == "" || nseen[n.ID] {
-			continue
+		if n.ID != "" {
+			nm[n.ID] = n
 		}
-		nseen[n.ID] = true
-		nodes = append(nodes, n)
 	}
-	edges := make([]Edge, 0, len(in.Edges))
-	eseen := map[string]bool{}
+	em := map[string]Edge{}
 	for _, e := range in.Edges {
-		k := e.From + "|" + e.To + "|" + e.Kind
-		if e.From == "" || e.To == "" || eseen[k] {
+		if e.From == "" || e.To == "" {
 			continue
 		}
-		eseen[k] = true
-		edges = append(edges, e)
+		k := e.From + "|" + e.To + "|" + e.Kind
+		em[k] = e
 	}
-	in.Nodes = nodes
-	in.Edges = edges
+	in.Nodes = make([]Node, 0, len(nm))
+	for _, n := range nm {
+		in.Nodes = append(in.Nodes, n)
+	}
+	sort.Slice(in.Nodes, func(i, j int) bool { return strings.Compare(in.Nodes[i].ID, in.Nodes[j].ID) < 0 })
+	in.Edges = make([]Edge, 0, len(em))
+	for _, e := range em {
+		in.Edges = append(in.Edges, e)
+	}
 	return in
 }

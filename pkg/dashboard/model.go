@@ -10,15 +10,13 @@ type Snapshot struct {
 
 type Node struct {
 	ID       string            `json:"id"`
+	ParentID string            `json:"parentId,omitempty"`
 	Kind     string            `json:"kind"`
+	Shape    string            `json:"shape,omitempty"`
 	Name     string            `json:"name"`
 	Group    string            `json:"group"`
 	Status   string            `json:"status"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-type Edge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	Kind string `json:"kind"`
-}
+type Edge struct{ From, To, Kind string }
