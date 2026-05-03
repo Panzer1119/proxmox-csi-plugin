@@ -1,0 +1,1 @@
+:root{color-scheme:light dark}body{margin:0;font-family:system-ui}header{display:flex;gap:1rem;padding:.7rem;background:#0f172a;color:#fff}#filter{flex:1;padding:.4rem}main{display:flex;height:calc(100vh - 56px)}#graph{flex:1;background:#020617}aside{width:320px;padding:.8rem;overflow:auto;border-left:1px solid #334155;background:#0b1220;color:#e2e8f0}.node{cursor:pointer}

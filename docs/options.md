@@ -154,3 +154,16 @@ metadata:
     csi.proxmox.sinextra.dev/lifecycle: "keep"
 ...
 ```
+
+### Dashboard options (controller)
+
+| Option | Description | Default |
+|---|---|---|
+| `--dashboard-enabled` | Enable built-in topology dashboard server. | `false` |
+| `--dashboard-address` | Bind address for dashboard HTTP server. | `:8088` |
+| `--dashboard-refresh-interval` | Poll interval for Proxmox/Kubernetes topology data. | `15s` |
+
+Dashboard endpoints:
+- `/dashboard/` web UI
+- `/dashboard/api/topology` JSON snapshot
+- `/dashboard/api/stream` Server-Sent Events live updates
