@@ -10,6 +10,18 @@ on:
       - "cmd/**"
       - "pkg/**"
       - "Dockerfile"
+  # Also build pull requests when they are opened/updated. Keep the same path filters.
+  pull_request:
+    types: [ opened, reopened, synchronize ]
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "pkg/**"
+      - "Dockerfile"
+
+env:
+  REGISTRY: ghcr.io
 
 jobs:
   build-publish:
@@ -26,6 +38,39 @@ jobs:
       - name: Unshallow
         run: git fetch --prune --unshallow
 
+      - name: Docker meta proxmox-csi-controller
+        id: meta-proxmox-csi-controller
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/proxmox-csi-controller
+          tags: |
+            type=edge,branch=main
+            type=ref,event=pr
+            type=sha,format=long
+          bake-target: proxmox-csi-controller
+
+      - name: Docker meta proxmox-csi-node
+        id: meta-proxmox-csi-node
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/proxmox-csi-node
+          tags: |
+            type=edge,branch=main
+            type=ref,event=pr
+            type=sha,format=long
+          bake-target: proxmox-csi-node
+
+      - name: Docker meta pvecsictl
+        id: meta-pvecsictl
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/pvecsictl
+          tags: |
+            type=edge,branch=main
+            type=ref,event=pr
+            type=sha,format=long
+          bake-target: pvecsictl
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@v4.0.0
       - name: Set up QEMU
@@ -38,20 +83,33 @@ jobs:
       - name: Github registry login
         uses: docker/login-action@v4
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
-        timeout-minutes: 10
-        run: make images
+      - name: Build and push all targets
+        id: build-all
+        uses: docker/bake-action@v5
+        with:
+          push: true
+          files: |
+            docker-bake.hcl
+            cwd://${{ steps.meta-proxmox-csi-controller.outputs.bake-file-tags }}
+            cwd://${{ steps.meta-proxmox-csi-controller.outputs.bake-file-labels }}
+            cwd://${{ steps.meta-proxmox-csi-node.outputs.bake-file-tags }}
+            cwd://${{ steps.meta-proxmox-csi-node.outputs.bake-file-labels }}
+            cwd://${{ steps.meta-pvecsictl.outputs.bake-file-tags }}
+            cwd://${{ steps.meta-pvecsictl.outputs.bake-file-labels }}
         env:
-          USERNAME: ${{ github.repository_owner }}
-          PUSH: "true"
-          TAG: "edge"
+          TAG_NAME: ${{ fromJSON(steps.meta-proxmox-csi-controller.outputs.json)['tag-names'][0] }}
+          SHA: ${{ github.sha }}
+
       - name: Sign images
         timeout-minutes: 4
-        run: make images-cosign
-        env:
-          USERNAME: ${{ github.repository_owner }}
-          TAG: "edge"
+        run: |
+          cosign sign --yes --recursive ${{ fromJSON(steps.meta-proxmox-csi-controller.outputs.json)['tags'][0] }}@${{ fromJSON(steps.build-all.outputs.metadata)['proxmox-csi-controller']['containerimage.digest'] }}
+          cosign sign --yes --recursive ${{ fromJSON(steps.meta-proxmox-csi-controller.outputs.json)['tags'][1] }}@${{ fromJSON(steps.build-all.outputs.metadata)['proxmox-csi-controller']['containerimage.digest'] }}
+          cosign sign --yes --recursive ${{ fromJSON(steps.meta-proxmox-csi-node.outputs.json)['tags'][0] }}@${{ fromJSON(steps.build-all.outputs.metadata)['proxmox-csi-node']['containerimage.digest'] }}
+          cosign sign --yes --recursive ${{ fromJSON(steps.meta-proxmox-csi-node.outputs.json)['tags'][1] }}@${{ fromJSON(steps.build-all.outputs.metadata)['proxmox-csi-node']['containerimage.digest'] }}
+          cosign sign --yes --recursive ${{ fromJSON(steps.meta-pvecsictl.outputs.json)['tags'][0] }}@${{ fromJSON(steps.build-all.outputs.metadata)['pvecsictl']['containerimage.digest'] }}
+          cosign sign --yes --recursive ${{ fromJSON(steps.meta-pvecsictl.outputs.json)['tags'][1] }}@${{ fromJSON(steps.build-all.outputs.metadata)['pvecsictl']['containerimage.digest'] }}
