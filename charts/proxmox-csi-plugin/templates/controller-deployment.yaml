@@ -57,10 +57,20 @@ spec:
             {{- if .Values.metrics.enabled }}
             - "--metrics-address=:{{ .Values.metrics.port }}"
             {{- end }}
+            {{- if .Values.dashboard.enabled }}
+            - "--dashboard-enabled=true"
+            - "--dashboard-address={{ .Values.dashboard.address }}"
+            - "--dashboard-refresh-interval={{ .Values.dashboard.refreshInterval }}"
+            {{- end }}
           ports:
             {{- if .Values.metrics.enabled }}
             - name: metrics
               containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- end }}
+            {{- if .Values.dashboard.enabled }}
+            - name: dashboard
+              containerPort: {{ .Values.dashboard.port }}
               protocol: TCP
             {{- end }}
           resources:

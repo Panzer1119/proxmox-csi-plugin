@@ -332,6 +332,18 @@ updateStrategy:
     maxUnavailable: 1
 
 # -- Prometheus metrics
+
+# -- Topology dashboard settings.
+dashboard:
+  # -- Enable built-in topology dashboard server in controller.
+  enabled: false
+  # -- Dashboard bind address flag value (host:port or :port).
+  address: ":8088"
+  # -- Topology refresh interval.
+  refreshInterval: 15s
+  # -- Service port exposed by the controller pod when dashboard is enabled.
+  port: 8088
+
 metrics:
   # -- Enable Prometheus metrics.
   enabled: false

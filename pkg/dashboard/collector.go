@@ -111,7 +111,9 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 	for _, a := range attachments.Items {
 		aid := "va:" + a.Name
 		ss.Nodes = append(ss.Nodes, Node{ID: aid, Kind: "volumeattachment", Name: a.Name, Group: "kubernetes", Status: map[bool]string{true: "attached", false: "pending"}[a.Status.Attached]})
-		ss.Edges = append(ss.Edges, Edge{From: aid, To: "pv:" + a.Spec.Source.PersistentVolumeName, Kind: "attaches"})
+		if a.Spec.Source.PersistentVolumeName != nil {
+			ss.Edges = append(ss.Edges, Edge{From: aid, To: "pv:" + *a.Spec.Source.PersistentVolumeName, Kind: "attaches"})
+		}
 		ss.Edges = append(ss.Edges, Edge{From: aid, To: "k8s-node:" + a.Spec.NodeName, Kind: "targets"})
 	}
 	store.Set(ss)
