@@ -60,6 +60,12 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 
 	pvcs, _ := c.kube.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{})
 	relPVC := map[string]bool{}
+	pvcInfo := map[string]struct {
+		namespace string
+		name      string
+		pvName    string
+		phase     string
+	}{}
 	for _, pvc := range pvcs.Items {
 		id := pvc.Namespace + "/" + pvc.Name
 		pvName := pvc.Spec.VolumeName
@@ -70,15 +76,17 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 		} else if _, ok := pvByName[pvName]; ok {
 			relPVC[id] = true
 		}
-		if !relPVC[id] {
-			continue
-		}
-		nid := "pvc:" + id
-		ss.Nodes = append(ss.Nodes, Node{ID: nid, Kind: "pvc", Shape: "hex", Name: pvc.Name, Group: "kubernetes", Status: string(pvc.Status.Phase), Metadata: map[string]string{"namespace": pvc.Namespace}})
-		if pvName != "" {
-			ss.Edges = append(ss.Edges, Edge{From: nid, To: "pv:" + pvName, Kind: "binds"})
+		if relPVC[id] {
+			pvcInfo[id] = struct {
+				namespace string
+				name      string
+				pvName    string
+				phase     string
+			}{namespace: pvc.Namespace, name: pvc.Name, pvName: pvName, phase: string(pvc.Status.Phase)}
 		}
 	}
+
+	pvcParents := map[string]map[string]bool{}
 
 	for pvName, handle := range pvByName {
 		v := volByPV[pvName]
@@ -103,6 +111,13 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 		for _, vol := range p.Spec.Volumes {
 			if vol.PersistentVolumeClaim != nil && relPVC[p.Namespace+"/"+vol.PersistentVolumeClaim.ClaimName] {
 				podHas = true
+				if p.Spec.NodeName != "" {
+					claimID := p.Namespace + "/" + vol.PersistentVolumeClaim.ClaimName
+					if pvcParents[claimID] == nil {
+						pvcParents[claimID] = map[string]bool{}
+					}
+					pvcParents[claimID]["k8s-node:"+p.Spec.NodeName] = true
+				}
 			}
 		}
 		if !podHas {
@@ -122,6 +137,20 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 			if vol.PersistentVolumeClaim != nil {
 				ss.Edges = append(ss.Edges, Edge{From: podID, To: "pvc:" + p.Namespace + "/" + vol.PersistentVolumeClaim.ClaimName, Kind: "mounts"})
 			}
+		}
+	}
+
+	for id, info := range pvcInfo {
+		parentID := ""
+		if parents := pvcParents[id]; len(parents) == 1 {
+			for parent := range parents {
+				parentID = parent
+			}
+		}
+		nid := "pvc:" + id
+		ss.Nodes = append(ss.Nodes, Node{ID: nid, ParentID: parentID, Kind: "pvc", Shape: "hex", Name: info.name, Group: "kubernetes", Status: info.phase, Metadata: map[string]string{"namespace": info.namespace}})
+		if info.pvName != "" {
+			ss.Edges = append(ss.Edges, Edge{From: nid, To: "pv:" + info.pvName, Kind: "binds"})
 		}
 	}
 
