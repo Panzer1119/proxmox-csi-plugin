@@ -75,13 +75,26 @@ function buildMermaid(data, iconLoaded){
     declared.add(n.id);
   }
 
-  const pvcToPV=new Map(), pvToDisk=new Map();
-  for(const e of data.edges){ if(e.kind==='binds') pvcToPV.set(e.from,e.to); if(e.kind==='backs') pvToDisk.set(e.from,e.to); }
-  const pairs=[];
-  for(const [pvc,pv] of pvcToPV.entries()){ const disk=pvToDisk.get(pv); if(disk) pairs.push([pvc,disk]); }
-  pairs.sort((a,b)=>(a[0]+a[1]).localeCompare(b[0]+b[1]));
+  // Emit edges from the snapshot after all groups/services are declared.
+  // Keep only service-to-service edges and de-duplicate deterministic output.
+  const serviceIds = new Set(serviceNodes.map(n => n.id));
+  const edges = [...data.edges]
+    .map(e => ({
+      from: e.from ?? e.From,
+      to: e.to ?? e.To,
+      kind: String(e.kind ?? e.Kind ?? '').toLowerCase(),
+    }))
+    .filter(e => (e.kind === 'backs' || e.kind === 'binds') && serviceIds.has(e.from) && serviceIds.has(e.to))
+    .sort((a,b)=>`${a.from}|${a.to}|${a.kind}`.localeCompare(`${b.from}|${b.to}|${b.kind}`));
   const seen=new Set();
-  for(const [a,b] of pairs){ if(!declared.has(a)||!declared.has(b)) continue; const k=a+'|'+b; if(seen.has(k)) continue; seen.add(k); lines.push(`${sanitize(a)}:R -- L:${sanitize(b)}`); }
+  for(const e of edges){
+    if(!declared.has(e.from)||!declared.has(e.to)) continue;
+    const k=`${e.from}|${e.to}|${e.kind}`;
+    if(seen.has(k)) continue;
+    seen.add(k);
+    if(e.kind==='backs') lines.push(`${sanitize(e.from)}:T -- B:${sanitize(e.to)}`);
+    if(e.kind==='binds') lines.push(`${sanitize(e.from)}:R -- L:${sanitize(e.to)}`);
+  }
   return lines.join('\n');
 }
 
