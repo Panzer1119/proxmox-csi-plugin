@@ -21,6 +21,7 @@ function icon(kind,loaded){
 }
 const fallbackIcon={region:'cloud',zone:'server',qemu:'server',lxc:'server',pod:'disk',pvc:'database','shared-disk':'disk','local-disk':'disk','storageclass':'database',pv:'disk','vm-workload':'server','k8s-node':'server'};
 function sanitize(id){return id.replace(/[^a-zA-Z0-9_]/g,'_');}
+function esc(t){return String(t).replaceAll('"','\\"');}
 
 function buildMermaid(data, iconLoaded){
   const q=filterEl.value.toLowerCase();
@@ -29,14 +30,13 @@ function buildMermaid(data, iconLoaded){
   const declared=new Set();
   const lines=['architecture-beta'];
 
-  const byId=new Map(nodes.map(n=>[n.id,n]));
   for(const n of nodes){
     const id=sanitize(n.id); const parent=n.parentId&&ids.has(n.parentId)?sanitize(n.parentId):'';
     const ic=iconLoaded?icon(n.kind,true):(fallbackIcon[n.kind]||'cloud');
     if(['region','zone','qemu','lxc','vm-workload','k8s-node','pod'].includes(n.kind)){
-      lines.push(`group ${id}(${ic})[${n.name}]${parent?` in ${parent}`:''}`);
+      lines.push(`group ${id}(${ic})["${esc(n.name)}"]${parent?` in ${parent}`:''}`);
     } else {
-      lines.push(`service ${id}(${ic})[${n.name}]${parent?` in ${parent}`:''}`);
+      lines.push(`service ${id}(${ic})["${esc(n.name)}"]${parent?` in ${parent}`:''}`);
     }
     declared.add(n.id);
   }
