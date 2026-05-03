@@ -10,6 +10,15 @@ on:
       - "cmd/**"
       - "pkg/**"
       - "Dockerfile"
+  # Also build pull requests when they are opened/updated. Keep the same path filters.
+  pull_request:
+    types: [ opened, reopened, synchronize ]
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "cmd/**"
+      - "pkg/**"
+      - "Dockerfile"
 
 jobs:
   build-publish:
@@ -25,6 +34,14 @@ jobs:
         uses: actions/checkout@v6
       - name: Unshallow
         run: git fetch --prune --unshallow
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          tags: |
+            type=edge,branch=main
+            type=ref,event=pr
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v4.0.0
@@ -48,10 +65,10 @@ jobs:
         env:
           USERNAME: ${{ github.repository_owner }}
           PUSH: "true"
-          TAG: "edge"
+          TAG: ${{ fromJSON(steps.meta.outputs.json).tag-names[0] }}
       - name: Sign images
         timeout-minutes: 4
         run: make images-cosign
         env:
           USERNAME: ${{ github.repository_owner }}
-          TAG: "edge"
+          TAG: ${{ fromJSON(steps.meta.outputs.json).tag-names[0] }}
