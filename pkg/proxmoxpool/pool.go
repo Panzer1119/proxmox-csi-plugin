@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"slices"
 	"strings"
 
 	proxmox "github.com/luthermonson/go-proxmox"
@@ -272,15 +271,39 @@ func (c *ProxmoxPool) FindVMsByUUIDs(ctx context.Context, uuids []string) (map[s
 	rs *proxmox.ClusterResource
 	vm *proxmox.VirtualMachine
 }, error) {
+	// quick guard
+	if c == nil || len(c.clients) == 0 {
+		return nil, ErrClustersNotFound
+	}
+
+	// Build a set for O(1) lookups
+	uuidSet := make(map[string]struct{}, len(uuids))
+	for _, u := range uuids {
+		if u != "" {
+			uuidSet[u] = struct{}{}
+		}
+	}
+	if len(uuidSet) == 0 {
+		return nil, fmt.Errorf("no uuids provided")
+	}
+
+	remaining := len(uuidSet)
+
 	vmsByRegion := make(map[string][]struct {
 		rs *proxmox.ClusterResource
 		vm *proxmox.VirtualMachine
-	})
+	}, len(c.clients))
+
 	for region, px := range c.clients {
+		if remaining == 0 {
+			break // found all
+		}
+
 		vms := make([]struct {
 			rs *proxmox.ClusterResource
 			vm *proxmox.VirtualMachine
-		}, 0)
+		}, 0, len(uuidSet))
+
 		_, err := px.GetVMsByFilter(ctx, func(rs *proxmox.ClusterResource) (bool, error) {
 			if rs.Type != "qemu" {
 				return false, nil
@@ -291,7 +314,12 @@ func (c *ProxmoxPool) FindVMsByUUIDs(ctx context.Context, uuids []string) (map[s
 				return false, err
 			}
 
-			if slices.Contains(uuids, goproxmox.GetVMUUID(vm)) {
+			u := goproxmox.GetVMUUID(vm)
+			if u == "" {
+				return false, nil
+			}
+
+			if _, ok := uuidSet[u]; ok {
 				vms = append(vms, struct {
 					rs *proxmox.ClusterResource
 					vm *proxmox.VirtualMachine
@@ -299,22 +327,31 @@ func (c *ProxmoxPool) FindVMsByUUIDs(ctx context.Context, uuids []string) (map[s
 					rs: rs,
 					vm: vm,
 				})
+				// mark found and remove from set so we can early-exit properly
+				delete(uuidSet, u)
+				remaining--
 				return true, nil
 			}
 
 			return false, nil
 		})
+
 		if err != nil {
 			if errors.Is(err, goproxmox.ErrVirtualMachineNotFound) {
+				// no VMs in this region, skip
 				continue
 			}
+			// return the underlying error with region context for better debugging
+			return nil, fmt.Errorf("region %s: %w", region, err)
+		}
 
-			return nil, ErrInstanceNotFound
+		if len(vms) > 0 {
+			vmsByRegion[region] = vms
 		}
-		if len(vms) == 0 {
-			continue
-		}
-		vmsByRegion[region] = vms
+	}
+
+	if len(vmsByRegion) == 0 {
+		return nil, ErrInstanceNotFound
 	}
 
 	return vmsByRegion, nil
