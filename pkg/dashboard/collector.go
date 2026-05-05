@@ -3,228 +3,560 @@ package dashboard
 import (
 	"context"
 	"fmt"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/csi"
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/proxmoxpool"
 	volutil "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/volume"
-	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 )
 
+// Collector gathers Kubernetes and Proxmox resources
 type Collector struct {
 	kube    kubernetes.Interface
 	proxmox *proxmoxpool.ProxmoxPool
 }
 
+// Collect gathers all Kubernetes and Proxmox resources and returns a snapshot
 func (c *Collector) Collect(ctx context.Context, store *Store) error {
 	ss := Snapshot{GeneratedAt: time.Now().UTC()}
-	pvs, _ := c.kube.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
-	pvByName := map[string]string{}
-	volByPV := map[string]*volutil.Volume{}
-	regionsWanted := map[string]bool{}
-	zonesWanted := map[string]map[string]bool{}
-	for _, pv := range pvs.Items {
-		if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != csi.DriverName {
-			continue
-		}
-		v, err := volutil.NewVolumeFromVolumeID(pv.Spec.CSI.VolumeHandle)
-		if err != nil {
-			continue
-		}
-		pvByName[pv.Name] = pv.Spec.CSI.VolumeHandle
-		volByPV[pv.Name] = v
-		regionsWanted[v.Region()] = true
-		if zonesWanted[v.Region()] == nil {
-			zonesWanted[v.Region()] = map[string]bool{}
-		}
-		if v.Zone() != "" {
-			zonesWanted[v.Region()][v.Zone()] = true
-		}
-	}
-	if len(pvByName) == 0 {
-		store.Set(ss)
+	ss.Kubernetes = c.collectKubernetes(ctx)
+	ss.Proxmox = c.collectProxmox(ctx, ss.Kubernetes)
+	store.Set(ss)
+	return nil
+}
+
+// collectKubernetes gathers all Kubernetes resources
+func (c *Collector) collectKubernetes(ctx context.Context) Kubernetes {
+	k8s := Kubernetes{}
+
+	// Collect nodes
+	k8s.Nodes = c.collectKubernetesNodes(ctx)
+
+	// Collect namespaces
+	k8s.Namespaces = c.collectNamespaces(ctx)
+
+	// Collect storage classes
+	k8s.StorageClasses = c.collectStorageClasses(ctx)
+
+	// Collect persistent volumes
+	k8s.PersistentVolumes = c.collectPersistentVolumes(ctx)
+
+	// Collect persistent volume claims
+	k8s.PersistentVolumeClaims = c.collectPersistentVolumeClaims(ctx, k8s.StorageClasses)
+
+	// Collect pods
+	k8s.Pods = c.collectPods(ctx, k8s.PersistentVolumeClaims)
+
+	return k8s
+}
+
+// collectKubernetesNodes gathers Kubernetes nodes
+func (c *Collector) collectKubernetesNodes(ctx context.Context) []KubernetesNode {
+	nodes, err := c.kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		klog.ErrorS(err, "failed to list nodes")
 		return nil
 	}
 
-	// Kubernetes storage classes for this driver.
-	scs, _ := c.kube.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
+	var result []KubernetesNode
+	for _, node := range nodes.Items {
+		kn := KubernetesNode{
+			KubernetesBase: KubernetesBase{
+				KubernetesReference: KubernetesReference{
+					Kind: "Node",
+					Name: node.Name,
+					UID:  string(node.UID),
+				},
+				CreatedAt:   node.CreationTimestamp.Time,
+				Annotations: node.Annotations,
+				Labels:      node.Labels,
+			},
+		}
+		result = append(result, kn)
+	}
+	return result
+}
+
+// collectNamespaces gathers Kubernetes namespaces
+func (c *Collector) collectNamespaces(ctx context.Context) []KubernetesNamespace {
+	namespaces, err := c.kube.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		klog.ErrorS(err, "failed to list namespaces")
+		return nil
+	}
+
+	var result []KubernetesNamespace
+	for _, ns := range namespaces.Items {
+		isPrivileged := false
+		if _, ok := ns.Labels["pod-security.kubernetes.io/enforce"]; ok {
+			val := ns.Labels["pod-security.kubernetes.io/enforce"]
+			isPrivileged = val == "privileged"
+		}
+
+		kns := KubernetesNamespace{
+			KubernetesBase: KubernetesBase{
+				KubernetesReference: KubernetesReference{
+					Kind: "Namespace",
+					Name: ns.Name,
+					UID:  string(ns.UID),
+				},
+				CreatedAt:   ns.CreationTimestamp.Time,
+				Annotations: ns.Annotations,
+				Labels:      ns.Labels,
+			},
+			IsPrivileged: isPrivileged,
+		}
+		result = append(result, kns)
+	}
+	return result
+}
+
+// collectStorageClasses gathers Kubernetes storage classes
+func (c *Collector) collectStorageClasses(ctx context.Context) []KubernetesStorageClass {
+	scs, err := c.kube.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		klog.ErrorS(err, "failed to list storage classes")
+		return nil
+	}
+
+	var result []KubernetesStorageClass
 	for _, sc := range scs.Items {
-		if sc.Provisioner == csi.DriverName {
-			ss.Nodes = append(ss.Nodes, Node{ID: "sc:" + sc.Name, Kind: "storageclass", Shape: "diamond", Name: sc.Name, Group: "kubernetes", Status: "active"})
+		isDefault := false
+		if val, ok := sc.Annotations["storageclass.kubernetes.io/is-default-class"]; ok {
+			isDefault = val == "true"
 		}
+
+		reclaimPolicy := "Delete"
+		if sc.ReclaimPolicy != nil {
+			reclaimPolicy = string(*sc.ReclaimPolicy)
+		}
+
+		volumeBindingMode := "Immediate"
+		if sc.VolumeBindingMode != nil {
+			volumeBindingMode = string(*sc.VolumeBindingMode)
+		}
+
+		ksc := KubernetesStorageClass{
+			KubernetesBase: KubernetesBase{
+				KubernetesReference: KubernetesReference{
+					Kind: "StorageClass",
+					Name: sc.Name,
+					UID:  string(sc.UID),
+				},
+				CreatedAt:   sc.CreationTimestamp.Time,
+				Annotations: sc.Annotations,
+				Labels:      sc.Labels,
+			},
+			Provisioner:          sc.Provisioner,
+			ReclaimPolicy:        reclaimPolicy,
+			AllowVolumeExpansion: *sc.AllowVolumeExpansion,
+			VolumeBindingMode:    volumeBindingMode,
+			IsDefault:            isDefault,
+		}
+		result = append(result, ksc)
+	}
+	return result
+}
+
+// collectPersistentVolumes gathers Kubernetes persistent volumes
+func (c *Collector) collectPersistentVolumes(ctx context.Context) []KubernetesPersistentVolume {
+	pvs, err := c.kube.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		klog.ErrorS(err, "failed to list persistent volumes")
+		return nil
 	}
 
-	pvcs, _ := c.kube.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{})
-	relPVC := map[string]bool{}
-	pvcInfo := map[string]struct {
-		namespace string
-		name      string
-		pvName    string
-		phase     string
-	}{}
+	var result []KubernetesPersistentVolume
+	for _, pv := range pvs.Items {
+		// Only include volumes from our CSI driver
+		if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != csi.DriverName {
+			continue
+		}
+
+		accessModes := make([]string, len(pv.Spec.AccessModes))
+		for i, mode := range pv.Spec.AccessModes {
+			accessModes[i] = string(mode)
+		}
+
+		storageClassName := ""
+		if pv.Spec.StorageClassName != "" {
+			storageClassName = pv.Spec.StorageClassName
+		}
+
+		mode := "Filesystem"
+		if pv.Spec.VolumeMode != nil {
+			mode = string(*pv.Spec.VolumeMode)
+		}
+
+		var claimRef *KubernetesReference
+		if pv.Spec.ClaimRef != nil {
+			claimRef = &KubernetesReference{
+				Kind:      pv.Spec.ClaimRef.Kind,
+				Namespace: pv.Spec.ClaimRef.Namespace,
+				Name:      pv.Spec.ClaimRef.Name,
+				UID:       string(pv.Spec.ClaimRef.UID),
+			}
+		}
+
+		var volRef *VolumeReference
+		if vol, err := volutil.NewVolumeFromVolumeID(pv.Spec.CSI.VolumeHandle); err == nil {
+			volRef = &VolumeReference{
+				Region:  vol.Region(),
+				Zone:    vol.Zone(),
+				Node:    vol.Node(),
+				Storage: vol.Storage(),
+				Disk:    vol.Disk(),
+			}
+		}
+
+		bound := pv.Spec.ClaimRef != nil
+
+		kpv := KubernetesPersistentVolume{
+			KubernetesBase: KubernetesBase{
+				KubernetesReference: KubernetesReference{
+					Kind: "PersistentVolume",
+					Name: pv.Name,
+					UID:  string(pv.UID),
+				},
+				CreatedAt:   pv.CreationTimestamp.Time,
+				Annotations: pv.Annotations,
+				Labels:      pv.Labels,
+			},
+			StorageClassName: storageClassName,
+			Bound:            bound,
+			AccessMode:       accessModes,
+			Capacity:         pv.Spec.Capacity.Storage().String(),
+			Mode:             mode,
+			ClaimReference:   claimRef,
+			VolumeHandle:     pv.Spec.CSI.VolumeHandle,
+			VolumeReference:  volRef,
+		}
+		result = append(result, kpv)
+	}
+	return result
+}
+
+// collectPersistentVolumeClaims gathers Kubernetes persistent volume claims
+func (c *Collector) collectPersistentVolumeClaims(ctx context.Context, storageClasses []KubernetesStorageClass) []KubernetesPersistentVolumeClaim {
+	pvcs, err := c.kube.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		klog.ErrorS(err, "failed to list persistent volume claims")
+		return nil
+	}
+
+	// Create a map of storage class names for quick lookup
+	scMap := make(map[string]bool)
+	for _, sc := range storageClasses {
+		scMap[sc.Name] = true
+	}
+
+	var result []KubernetesPersistentVolumeClaim
 	for _, pvc := range pvcs.Items {
-		id := pvc.Namespace + "/" + pvc.Name
-		pvName := pvc.Spec.VolumeName
-		if pvName == "" { // unbound but class belongs to our driver
-			if pvc.Spec.StorageClassName != nil && hasSC(ss.Nodes, *pvc.Spec.StorageClassName) {
-				relPVC[id] = true
-			}
-		} else if _, ok := pvByName[pvName]; ok {
-			relPVC[id] = true
+		// Filter to only relevant PVCs
+		scName := ""
+		if pvc.Spec.StorageClassName != nil {
+			scName = *pvc.Spec.StorageClassName
 		}
-		if relPVC[id] {
-			pvcInfo[id] = struct {
-				namespace string
-				name      string
-				pvName    string
-				phase     string
-			}{namespace: pvc.Namespace, name: pvc.Name, pvName: pvName, phase: string(pvc.Status.Phase)}
-		}
-	}
 
-	pvcParents := map[string]map[string]bool{}
-
-	for pvName, handle := range pvByName {
-		v := volByPV[pvName]
-		pvID := "pv:" + pvName
-		diskID := "disk:" + v.Region() + "/" + v.Zone() + "/" + v.Storage() + "/" + v.Disk()
-		kind := "local-disk"
-		parent := "zone:" + v.Region() + "/" + v.Zone()
-		if v.Zone() == "" {
-			kind = "shared-disk"
-			parent = "region:" + v.Region()
-		}
-		ss.Nodes = append(ss.Nodes, Node{ID: pvID, Kind: "pv", Shape: "circle", Name: pvName, Group: "kubernetes", Status: "bound", Metadata: map[string]string{"volumeHandle": handle}})
-		ss.Nodes = append(ss.Nodes, Node{ID: diskID, ParentID: parent, Kind: kind, Shape: "cylinder", Name: v.VolID(), Group: "proxmox", Status: "known"})
-		ss.Edges = append(ss.Edges, Edge{From: pvID, To: diskID, Kind: "backs"})
-	}
-
-	pods, _ := c.kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	log.Debugf("collector: pods returned: %d", len(pods.Items))
-	nodeSeen := map[string]bool{}
-	for _, p := range pods.Items {
-		podHas := false
-		for _, vol := range p.Spec.Volumes {
-			if vol.PersistentVolumeClaim != nil && relPVC[p.Namespace+"/"+vol.PersistentVolumeClaim.ClaimName] {
-				podHas = true
-				if p.Spec.NodeName != "" {
-					claimID := p.Namespace + "/" + vol.PersistentVolumeClaim.ClaimName
-					if pvcParents[claimID] == nil {
-						pvcParents[claimID] = map[string]bool{}
-					}
-					pvcParents[claimID]["k8s-node:"+p.Spec.NodeName] = true
-				}
-			}
-		}
-		if !podHas {
+		// Skip if not using our CSI driver
+		if scName != "" && !scMap[scName] {
 			continue
 		}
-		nodeID := "k8s-node:" + p.Spec.NodeName
-		if !nodeSeen[nodeID] {
-			nodeSeen[nodeID] = true
-			ss.Nodes = append(ss.Nodes, Node{ID: nodeID, Kind: "k8s-node", Shape: "square", Name: p.Spec.NodeName, Group: "kubernetes", Status: "ready"})
+
+		accessModes := make([]string, len(pvc.Spec.AccessModes))
+		for i, mode := range pvc.Spec.AccessModes {
+			accessModes[i] = string(mode)
 		}
-		vmID := "vm:" + p.Spec.NodeName
-		ss.Nodes = append(ss.Nodes, Node{ID: vmID, Kind: "vm-workload", ParentID: nodeID, Shape: "square", Name: p.Spec.NodeName, Group: "kubernetes", Status: "active"})
-		podID := "pod:" + p.Namespace + "/" + p.Name
-		ss.Nodes = append(ss.Nodes, Node{ID: podID, Kind: "pod", ParentID: vmID, Shape: "square", Name: p.Name, Group: "kubernetes", Status: string(p.Status.Phase)})
-		ss.Edges = append(ss.Edges, Edge{From: nodeID, To: podID, Kind: "runs"})
-		for _, vol := range p.Spec.Volumes {
+
+		volumeMode := "Filesystem"
+		if pvc.Spec.VolumeMode != nil {
+			volumeMode = string(*pvc.Spec.VolumeMode)
+		}
+
+		bound := pvc.Spec.VolumeName != ""
+
+		kpvc := KubernetesPersistentVolumeClaim{
+			KubernetesBase: KubernetesBase{
+				KubernetesReference: KubernetesReference{
+					Kind:      "PersistentVolumeClaim",
+					Namespace: pvc.Namespace,
+					Name:      pvc.Name,
+					UID:       string(pvc.UID),
+				},
+				CreatedAt:   pvc.CreationTimestamp.Time,
+				Annotations: pvc.Annotations,
+				Labels:      pvc.Labels,
+			},
+			StorageClassName: scName,
+			Bound:            bound,
+			AccessMode:       accessModes,
+			CapacityRequest:  pvc.Spec.Resources.Requests.Storage().String(),
+			VolumeMode:       volumeMode,
+			VolumeName:       pvc.Spec.VolumeName,
+		}
+		result = append(result, kpvc)
+	}
+	return result
+}
+
+// collectPods gathers Kubernetes pods that use PVCs
+func (c *Collector) collectPods(ctx context.Context, pvcs []KubernetesPersistentVolumeClaim) []KubernetesPod {
+	pods, err := c.kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		klog.ErrorS(err, "failed to list pods")
+		return nil
+	}
+
+	// Create a set of PVC names for quick lookup
+	pvcSet := make(map[string]bool)
+	for _, pvc := range pvcs {
+		pvcSet[pvc.Namespace+"/"+pvc.Name] = true
+	}
+
+	var result []KubernetesPod
+	for _, pod := range pods.Items {
+		// Check if pod uses any PVCs
+		volumes := make(map[string]string)
+		usesPVC := false
+
+		for _, vol := range pod.Spec.Volumes {
 			if vol.PersistentVolumeClaim != nil {
-				ss.Edges = append(ss.Edges, Edge{From: podID, To: "pvc:" + p.Namespace + "/" + vol.PersistentVolumeClaim.ClaimName, Kind: "mounts"})
+				pvcKey := pod.Namespace + "/" + vol.PersistentVolumeClaim.ClaimName
+				if pvcSet[pvcKey] {
+					usesPVC = true
+				}
+				volumes[vol.Name] = vol.PersistentVolumeClaim.ClaimName
 			}
 		}
-	}
 
-	for id, info := range pvcInfo {
-		parentID := ""
-		if parents := pvcParents[id]; len(parents) == 1 {
-			for parent := range parents {
-				parentID = parent
-			}
-		}
-		nid := "pvc:" + id
-		ss.Nodes = append(ss.Nodes, Node{ID: nid, ParentID: parentID, Kind: "pvc", Shape: "hex", Name: info.name, Group: "kubernetes", Status: info.phase, Metadata: map[string]string{"namespace": info.namespace}})
-		if info.pvName != "" {
-			ss.Edges = append(ss.Edges, Edge{From: nid, To: "pv:" + info.pvName, Kind: "binds"})
-		}
-	}
-
-	for region := range regionsWanted {
-		rid := "region:" + region
-		ss.Nodes = append(ss.Nodes, Node{ID: rid, Kind: "region", Shape: "square", Name: region, Group: "proxmox", Status: "active"})
-		if zonesWanted[region] == nil {
+		if !usesPVC {
 			continue
 		}
-		for zone := range zonesWanted[region] {
-			zid := "zone:" + region + "/" + zone
-			ss.Nodes = append(ss.Nodes, Node{ID: zid, ParentID: rid, Kind: "zone", Shape: "square", Name: zone, Group: "proxmox", Status: "active"})
-			ss.Edges = append(ss.Edges, Edge{From: rid, To: zid, Kind: "contains"})
+
+		kpod := KubernetesPod{
+			KubernetesBase: KubernetesBase{
+				KubernetesReference: KubernetesReference{
+					Kind:      "Pod",
+					Namespace: pod.Namespace,
+					Name:      pod.Name,
+					UID:       string(pod.UID),
+				},
+				CreatedAt:   pod.CreationTimestamp.Time,
+				Annotations: pod.Annotations,
+				Labels:      pod.Labels,
+			},
+			Hostname: pod.Spec.Hostname,
+			NodeName: pod.Spec.NodeName,
+			Volumes:  volumes,
+		}
+		result = append(result, kpod)
+	}
+	return result
+}
+
+// collectProxmox gathers all Proxmox resources
+func (c *Collector) collectProxmox(ctx context.Context, k8s Kubernetes) Proxmox {
+	proxmox := Proxmox{}
+
+	// Determine which regions and zones we need to monitor based on used volumes
+	regionsNeeded := c.getRegionsFromVolumes(k8s.PersistentVolumes)
+
+	// Collect Proxmox clusters
+	proxmox.Clusters = c.collectProxmoxClusters(ctx, regionsNeeded)
+
+	// Collect Proxmox nodes and disks
+	proxmox.Nodes, proxmox.SharedDisks, proxmox.LocalDisks = c.collectProxmoxResources(ctx, k8s, regionsNeeded)
+
+	return proxmox
+}
+
+// getRegionsFromVolumes extracts regions and zones from volumes
+func (c *Collector) getRegionsFromVolumes(pvs []KubernetesPersistentVolume) map[string]map[string]bool {
+	regionsNeeded := make(map[string]map[string]bool)
+
+	for _, pv := range pvs {
+		if pv.VolumeReference == nil {
+			continue
+		}
+
+		region := pv.VolumeReference.Region
+		if regionsNeeded[region] == nil {
+			regionsNeeded[region] = make(map[string]bool)
+		}
+
+		if pv.VolumeReference.Zone != "" {
+			regionsNeeded[region][pv.VolumeReference.Zone] = true
 		}
 	}
 
-	// Match proxmox VMs/LXCs by zone and include only resources tied to relevant zones.
-	for region := range regionsWanted {
+	return regionsNeeded
+}
+
+// collectProxmoxClusters gathers Proxmox clusters from the pool
+func (c *Collector) collectProxmoxClusters(ctx context.Context, regionsNeeded map[string]map[string]bool) []ProxmoxCluster {
+	var result []ProxmoxCluster
+
+	for region := range regionsNeeded {
+		px, err := c.proxmox.GetProxmoxCluster(region)
+		if err != nil {
+			klog.ErrorS(err, "failed to get proxmox cluster", "region", region)
+			continue
+		}
+
+		cl, err := px.Cluster(ctx)
+		if err != nil {
+			klog.ErrorS(err, "failed to get cluster info", "region", region)
+			continue
+		}
+
+		info, err := cl.ClusterInfo(ctx)
+		if err != nil {
+			klog.ErrorS(err, "failed to get cluster info", "region", region)
+			continue
+		}
+
+		result = append(result, ProxmoxCluster{
+			Name:   info.Cluster,
+			Region: region,
+		})
+	}
+
+	return result
+}
+
+// collectProxmoxResources gathers Proxmox VMs and disks
+func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes, regionsNeeded map[string]map[string]bool) (
+	[]ProxmoxNode, []ProxmoxSharedDisk, []ProxmoxLocalDisk) {
+
+	var nodes []ProxmoxNode
+	var sharedDisks []ProxmoxSharedDisk
+	var localDisks []ProxmoxLocalDisk
+
+	// Track which disks are used and attached to which VMs
+	diskUsage := c.analyzeDiskUsage(k8s.PersistentVolumes)
+
+	for region := range regionsNeeded {
 		px, err := c.proxmox.GetProxmoxCluster(region)
 		if err != nil {
 			continue
 		}
+
 		cl, err := px.Cluster(ctx)
 		if err != nil {
 			continue
 		}
-		res, err := cl.Resources(ctx, "")
+
+		resources, err := cl.Resources(ctx, "")
+		if err != nil {
+			klog.ErrorS(err, "failed to get cluster resources", "region", region)
+			continue
+		}
+
+		// Collect nodes (VMs and LXCs) that are in zones we care about
+		for _, r := range resources {
+			if (r.Type != "qemu" && r.Type != "lxc") || regionsNeeded[region][r.Node] == false {
+				continue
+			}
+
+			pnode := ProxmoxNode{
+				ClusterName: region,
+				ID:          fmt.Sprintf("%d", r.VMID),
+				Name:        r.Name,
+				NodeID:      r.Node,
+				Type:        r.Type,
+				Status:      r.Status,
+			}
+			nodes = append(nodes, pnode)
+		}
+	}
+
+	// Analyze disks from volumes
+	for _, pv := range k8s.PersistentVolumes {
+		if pv.VolumeReference == nil {
+			continue
+		}
+
+		region := pv.VolumeReference.Region
+		node := pv.VolumeReference.Node
+		storage := pv.VolumeReference.Storage
+		diskName := pv.VolumeReference.Disk
+		zone := pv.VolumeReference.Zone
+
+		// Determine if it's a shared disk (no zone) or local disk
+		if zone == node || zone == "" {
+			// Shared disk
+			disk := ProxmoxSharedDisk{
+				ProxmoxDisk: ProxmoxDisk{
+					StorageID: storage,
+					Name:      diskName,
+					SizeBytes: 0, // Would need to query Proxmox to get actual size
+				},
+				AttachedVMIds: diskUsage[region+"/"+storage+"/"+diskName],
+			}
+			sharedDisks = append(sharedDisks, disk)
+		} else {
+			// Local disk
+			attachedVMID := ""
+			if len(diskUsage[region+"/"+zone+"/"+storage+"/"+diskName]) > 0 {
+				attachedVMID = diskUsage[region+"/"+zone+"/"+storage+"/"+diskName][0]
+			}
+
+			var vmIDPtr *string
+			if attachedVMID != "" {
+				vmIDPtr = &attachedVMID
+			}
+
+			disk := ProxmoxLocalDisk{
+				ProxmoxDisk: ProxmoxDisk{
+					StorageID: storage,
+					Name:      diskName,
+					SizeBytes: 0, // Would need to query Proxmox to get actual size
+				},
+				NodeID:       zone,
+				AttachedVMID: vmIDPtr,
+			}
+			localDisks = append(localDisks, disk)
+		}
+	}
+
+	return nodes, sharedDisks, localDisks
+}
+
+// analyzeDiskUsage builds a map of which VMs have which disks
+func (c *Collector) analyzeDiskUsage(pvs []KubernetesPersistentVolume) map[string][]string {
+	diskToVMs := make(map[string][]string)
+
+	for _, pv := range pvs {
+		if pv.VolumeReference == nil {
+			continue
+		}
+
+		// Extract VM ID from disk name if present
+		vol, err := volutil.NewVolumeFromVolumeID(pv.VolumeHandle)
 		if err != nil {
 			continue
 		}
-		for _, r := range res {
-			if (r.Type != "qemu" && r.Type != "lxc") || !zonesWanted[region][r.Node] {
-				continue
-			}
-			id := fmt.Sprintf("pve-vm:%s/%d", region, r.VMID)
-			ss.Nodes = append(ss.Nodes, Node{ID: id, ParentID: "zone:" + region + "/" + r.Node, Kind: r.Type, Shape: "square", Name: r.Name, Group: "proxmox", Status: r.Status})
-		}
-	}
 
-	store.Set(dedup(ss))
-	return nil
-}
-
-func hasSC(nodes []Node, name string) bool {
-	for _, n := range nodes {
-		if n.Kind == "storageclass" && n.Name == name {
-			return true
-		}
-	}
-	return false
-}
-func dedup(in Snapshot) Snapshot {
-	nm := map[string]Node{}
-	for _, n := range in.Nodes {
-		if n.ID != "" {
-			nm[n.ID] = n
-		}
-	}
-	em := map[string]Edge{}
-	for _, e := range in.Edges {
-		if e.From == "" || e.To == "" {
+		vmID := vol.VMID()
+		if vmID == "" {
 			continue
 		}
-		k := e.From + "|" + e.To + "|" + e.Kind
-		em[k] = e
+
+		node := pv.VolumeReference.Node
+		zone := pv.VolumeReference.Zone
+
+		var key string
+		if zone == node || zone == "" {
+			key = vol.VolumeSharedID()
+		} else {
+			key = vol.VolumeID()
+		}
+
+		diskToVMs[key] = append(diskToVMs[key], vmID)
 	}
-	in.Nodes = make([]Node, 0, len(nm))
-	for _, n := range nm {
-		in.Nodes = append(in.Nodes, n)
-	}
-	sort.Slice(in.Nodes, func(i, j int) bool { return strings.Compare(in.Nodes[i].ID, in.Nodes[j].ID) < 0 })
-	in.Edges = make([]Edge, 0, len(em))
-	for _, e := range em {
-		in.Edges = append(in.Edges, e)
-	}
-	return in
+
+	return diskToVMs
 }
