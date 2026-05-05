@@ -271,6 +271,28 @@ type VMAndConfig struct {
 	VM *proxmox.VirtualMachine
 }
 
+// FindVMsByNodes find VMs by kubernetes node resources in all Proxmox clusters.
+func (c *ProxmoxPool) FindVMsByNodes(ctx context.Context, nodes []*v1.Node) (map[string][]VMAndConfig, error) {
+	// quick guard
+	if c == nil || len(c.clients) == 0 {
+		return nil, ErrClustersNotFound
+	}
+
+	// Extract uuids
+	uuids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Status.NodeInfo.SystemUUID != "" {
+			uuids = append(uuids, n.Status.NodeInfo.SystemUUID)
+		}
+	}
+
+	if len(uuids) == 0 {
+		return nil, fmt.Errorf("no valid node UUIDs found")
+	}
+
+	return c.FindVMsByUUIDs(ctx, uuids)
+}
+
 // FindVMsByUUIDs find VMs by UUIDs in all Proxmox clusters.
 func (c *ProxmoxPool) FindVMsByUUIDs(ctx context.Context, uuids []string) (map[string][]VMAndConfig, error) {
 	// quick guard
