@@ -418,11 +418,11 @@ func (c *Collector) collectProxmox(ctx context.Context, k8s Kubernetes) Proxmox 
 		usedRegions[region] = true
 	}
 
-	// Collect Proxmox hosts, VMs and disks
-	result.Nodes, result.VMs, result.SharedDisks, result.LocalDisks = c.collectProxmoxResources(ctx, k8s, regionsNeeded, storageMeta, usedNodes, usedVMs)
+	// Collect Proxmox VMs and disks
+	result.VMs, result.SharedDisks, result.LocalDisks = c.collectProxmoxResources(ctx, k8s, regionsNeeded, storageMeta, usedNodes, usedVMs)
 
-	// Collect Proxmox clusters that have our volumes
-	result.Clusters = c.collectProxmoxClusters(ctx, regionsNeeded, usedRegions)
+	// Collect Proxmox clusters and nodes that have our volumes
+	result.Clusters, result.Nodes = c.collectProxmoxClusters(ctx, regionsNeeded, usedRegions, usedNodes)
 
 	return result
 }
@@ -498,8 +498,9 @@ func (c *Collector) getRegionsFromVolumes(pvs []KubernetesPersistentVolume) map[
 }
 
 // collectProxmoxClusters gathers Proxmox clusters from the pool that have our volumes
-func (c *Collector) collectProxmoxClusters(ctx context.Context, regionsNeeded map[string]map[string]bool, usedRegions map[string]bool) []ProxmoxCluster {
-	var result []ProxmoxCluster
+func (c *Collector) collectProxmoxClusters(ctx context.Context, regionsNeeded map[string]map[string]bool, usedRegions map[string]bool, usedNodes map[string]bool) ([]ProxmoxCluster, []ProxmoxNode) {
+	var clusters []ProxmoxCluster
+	var nodes []ProxmoxNode
 
 	for region := range regionsNeeded {
 		// Only include clusters that have our volumes
@@ -519,20 +520,26 @@ func (c *Collector) collectProxmoxClusters(ctx context.Context, regionsNeeded ma
 			continue
 		}
 
-		result = append(result, ProxmoxCluster{
+		for _, nodeStatus := range cl.Nodes {
+			nodes = append(nodes, proxmoxNodeFromNodeStatus(cl.Name, nodeStatus))
+		}
+
+		clusters = append(clusters, ProxmoxCluster{
 			Name:   cl.Name,
 			Region: region,
 		})
 	}
 
-	return result
+	// Filter nodes to only include those that are used
+	nodes = filterUsedProxmoxNodes(nodes, usedNodes)
+
+	return clusters, nodes
 }
 
 // collectProxmoxResources gathers Proxmox hosts, VMs and disks that are used by our plugin
 func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes, regionsNeeded map[string]map[string]bool, storageMeta map[string]map[string]proxmoxStorageMeta, usedNodes map[string]bool, usedVMs map[string]bool) (
-	[]ProxmoxNode, []ProxmoxVM, []ProxmoxSharedDisk, []ProxmoxLocalDisk) {
+	[]ProxmoxVM, []ProxmoxSharedDisk, []ProxmoxLocalDisk) {
 
-	var nodes []ProxmoxNode
 	var vms []ProxmoxVM
 	var sharedDisks []ProxmoxSharedDisk
 	var localDisks []ProxmoxLocalDisk
@@ -546,15 +553,6 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		if err != nil {
 			klog.ErrorS(err, "failed to get proxmox cluster", "region", region)
 			continue
-		}
-
-		hosts, err := px.Nodes(ctx)
-		if err != nil {
-			klog.ErrorS(err, "failed to get proxmox nodes", "region", region)
-		} else {
-			for _, host := range hosts {
-				nodes = append(nodes, proxmoxNodeFromStatus(region, host))
-			}
 		}
 
 		cl, err := px.Cluster(ctx)
@@ -572,14 +570,14 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		resourcesByRegion[region] = resources
 		pxClientMap[region] = px
 
-		wantedNodes := regionsNeeded[region]
-		// Collect nodes (VMs and LXCs) that are in zones we care about.
+		wantedResources := regionsNeeded[region]
+		// Collect vms/lxcs that are in zones we care about.
 		// If no zone is specified for the region, include all VM/LXC resources.
 		for _, r := range resources {
 			if r.Type != "qemu" && r.Type != "lxc" {
 				continue
 			}
-			if len(wantedNodes) > 0 && !wantedNodes[r.Node] {
+			if len(wantedResources) > 0 && !wantedResources[r.Node] {
 				continue
 			}
 
@@ -682,20 +680,19 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		}
 	}
 
-	// Filter nodes and VMs to only include those that are used
-	nodes = filterUsedProxmoxNodes(nodes, usedNodes)
+	// Filter VMs to only include those that are used
 	vms = filterUsedProxmoxVMs(vms, usedVMs)
 
-	return nodes, vms, sharedDisks, localDisks
+	return vms, sharedDisks, localDisks
 }
 
-func proxmoxNodeFromStatus(region string, status *proxmox.NodeStatus) ProxmoxNode {
+func proxmoxNodeFromNodeStatus(clusterName string, status *proxmox.NodeStatus) ProxmoxNode {
 	if status == nil {
-		return ProxmoxNode{ClusterName: region}
+		return ProxmoxNode{ClusterName: clusterName}
 	}
 
 	return ProxmoxNode{
-		ClusterName: region,
+		ClusterName: clusterName,
 		ID:          status.NodeID,
 		Name:        status.Name,
 		Status:      status.Status,

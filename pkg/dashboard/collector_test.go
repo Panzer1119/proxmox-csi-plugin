@@ -160,10 +160,10 @@ func TestDiskUsageKeyAndMatching(t *testing.T) {
 	}
 }
 
-func TestProxmoxNodeFromStatus(t *testing.T) {
-	got := proxmoxNodeFromStatus("region-1", &proxmox.NodeStatus{
+func TestProxmoxNodeFromNodeStatus(t *testing.T) {
+	got := proxmoxNodeFromNodeStatus("region-1", &proxmox.NodeStatus{
 		Status: "online",
-		Node:   "pve-01",
+		NodeID: "pve-01",
 		Name:   "pve-01",
 		ID:     "node/pve-01",
 	})
