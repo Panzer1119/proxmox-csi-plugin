@@ -59,6 +59,9 @@ func (c *Collector) collectKubernetes(ctx context.Context) Kubernetes {
 	// Collect persistent volume claims first to determine what's relevant
 	k8s.PersistentVolumeClaims = c.collectPersistentVolumeClaims(ctx, k8s.StorageClasses)
 
+	// Collect pods that use our PVCs
+	k8s.Pods = c.collectPods(ctx, k8s.PersistentVolumeClaims)
+
 	// Build sets of relevant resources based on PVs and PVCs
 	usedStorageClasses := make(map[string]bool)
 	usedNodeNames := make(map[string]bool)
@@ -75,9 +78,10 @@ func (c *Collector) collectKubernetes(ctx context.Context) Kubernetes {
 		if pv.StorageClassName != "" {
 			usedStorageClasses[pv.StorageClassName] = true
 		}
-		if pv.VolumeReference != nil && pv.VolumeReference.Node != "" {
-			usedNodeNames[pv.VolumeReference.Node] = true
-		}
+	}
+
+	for _, pod := range k8s.Pods {
+		usedNodeNames[pod.NodeName] = true
 	}
 
 	// Collect storage classes
@@ -88,9 +92,6 @@ func (c *Collector) collectKubernetes(ctx context.Context) Kubernetes {
 
 	// Collect nodes
 	k8s.Nodes = c.collectKubernetesNodes(ctx, usedNodeNames)
-
-	// Collect pods
-	k8s.Pods = c.collectPods(ctx, k8s.PersistentVolumeClaims)
 
 	return k8s
 }
