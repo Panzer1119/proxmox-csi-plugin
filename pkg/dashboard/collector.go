@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	goproxmox "github.com/luthermonson/go-proxmox"
+	proxmox "github.com/luthermonson/go-proxmox"
+	goproxmox "github.com/sergelogvinov/go-proxmox"
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/csi"
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/proxmoxpool"
 	volutil "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/volume"
@@ -384,15 +385,21 @@ func (c *Collector) collectProxmoxStorageMeta(ctx context.Context, pvs []Kuberne
 
 		regionMeta := map[string]proxmoxStorageMeta{}
 		for storage := range storages {
-			storageConfig, err := px.GetClusterStorage(ctx, storage)
+			storageConfigs, err := px.GetStorageListByFilter(ctx, func(r *proxmox.ClusterStorage) (bool, error) {
+				return r.Storage == storage, nil
+			})
 			if err != nil {
 				klog.ErrorS(err, "failed to get proxmox storage config", "region", region, "storage", storage)
 				continue
 			}
 
+			if len(storageConfigs) == 0 {
+				continue
+			}
+
 			regionMeta[storage] = proxmoxStorageMeta{
-				Shared: storageConfig.Shared == 1,
-				Nodes:  splitCSV(storageConfig.Nodes),
+				Shared: storageConfigs[0].Shared == 1,
+				Nodes:  splitCSV(storageConfigs[0].Nodes),
 			}
 		}
 		if len(regionMeta) > 0 {
@@ -442,14 +449,8 @@ func (c *Collector) collectProxmoxClusters(ctx context.Context, regionsNeeded ma
 			continue
 		}
 
-		info, err := cl.ClusterInfo(ctx)
-		if err != nil {
-			klog.ErrorS(err, "failed to get cluster info", "region", region)
-			continue
-		}
-
 		result = append(result, ProxmoxCluster{
-			Name:   info.Cluster,
+			Name:   cl.Name,
 			Region: region,
 		})
 	}
@@ -466,7 +467,7 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 	var localDisks []ProxmoxLocalDisk
 
 	// Pre-fetch resources per region so we only call the cluster API once per region.
-	resourcesByRegion := map[string][]goproxmox.ClusterResource{}
+	resourcesByRegion := map[string][]*proxmox.ClusterResource{}
 	pxClientMap := map[string]*goproxmox.APIClient{}
 
 	for region := range regionsNeeded {
@@ -603,7 +604,7 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 }
 
 // analyzeDiskUsage maps disks to the actual Proxmox VM IDs that have them attached.
-func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersistentVolume, regionsNeeded map[string]map[string]bool, storageMeta map[string]map[string]proxmoxStorageMeta, resourcesByRegion map[string][]goproxmox.ClusterResource, pxClientMap map[string]*goproxmox.APIClient) map[string]proxmoxDiskUsage {
+func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersistentVolume, regionsNeeded map[string]map[string]bool, storageMeta map[string]map[string]proxmoxStorageMeta, resourcesByRegion map[string][]*proxmox.ClusterResource, pxClientMap map[string]*goproxmox.APIClient) map[string]proxmoxDiskUsage {
 	diskToVMs := make(map[string]proxmoxDiskUsage)
 
 	for region := range regionsNeeded {
@@ -624,7 +625,7 @@ func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersis
 			}
 		}
 
-		vmConfigCache := map[uint64]*goproxmox.VirtualMachine{}
+		vmConfigCache := map[uint64]*proxmox.VirtualMachine{}
 
 		for _, pv := range pvs {
 			if pv.VolumeReference == nil || pv.VolumeReference.Region != region {
@@ -801,15 +802,20 @@ func (c *Collector) getStorageMeta(ctx context.Context, storageMeta map[string]m
 		return proxmoxStorageMeta{}, false
 	}
 
-	storageConfig, err := px.GetClusterStorage(ctx, storage)
+	storageConfigs, err := px.GetStorageListByFilter(ctx, func(r *proxmox.ClusterStorage) (bool, error) {
+		return r.Storage == storage, nil
+	})
 	if err != nil {
 		klog.ErrorS(err, "failed to get proxmox storage config", "region", region, "storage", storage)
 		return proxmoxStorageMeta{}, false
 	}
+	if len(storageConfigs) == 0 {
+		return proxmoxStorageMeta{}, false
+	}
 
 	meta := proxmoxStorageMeta{
-		Shared: storageConfig.Shared == 1,
-		Nodes:  splitCSV(storageConfig.Nodes),
+		Shared: storageConfigs[0].Shared == 1,
+		Nodes:  splitCSV(storageConfigs[0].Nodes),
 	}
 
 	if storageMeta[region] == nil {
