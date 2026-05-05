@@ -8,17 +8,51 @@ import (
 
 // Snapshot represents the current state of Kubernetes and Proxmox resources
 type Snapshot struct {
-	GeneratedAt time.Time  `json:"generatedAt"`
-	Kubernetes  Kubernetes `json:"kubernetes"`
-	Proxmox     Proxmox    `json:"proxmox"`
+	GeneratedAt time.Time         `json:"generatedAt"`
+	Regions     map[string]Region `json:"regions"`
+	Kubernetes  Kubernetes        `json:"kubernetes"`
 }
 
-// KubernetesReference identifies a Kubernetes resource
-type KubernetesReference struct {
-	Kind      string `json:"kind"`
-	Namespace string `json:"namespace,omitempty"`
-	Name      string `json:"name"`
-	UID       string `json:"uid"`
+// Region represents a Proxmox cluster
+type Region struct {
+	Name  string          `json:"name"`
+	Zones map[string]Zone `json:"zones"`
+	Disks []ProxmoxDisk   `json:"disks,omitempty"` // Shared Disks
+}
+
+// Zone represents a Proxmox host
+type Zone struct {
+	Name  string        `json:"name"`
+	VMs   []ProxmoxVM   `json:"vms,omitempty"`
+	Disks []ProxmoxDisk `json:"disks,omitempty"` // Local Disks
+}
+
+// ProxmoxDisk represents a Proxmox disk
+type ProxmoxDisk struct {
+	StorageID     string   `json:"storageId"`
+	Name          string   `json:"name"`
+	SizeBytes     *int64   `json:"sizeBytes"`
+	AttachedVMIDs []string `json:"attachedVMIds,omitempty"`
+}
+
+// ProxmoxVM represents a Proxmox vm and Kubernetes node
+type ProxmoxVM struct {
+	ID   string         `json:"id"`
+	Name string         `json:"name"`
+	Node KubernetesNode `json:"node"`
+}
+
+// KubernetesNode represents a Kubernetes node
+type KubernetesNode struct {
+	KubernetesBase
+	Pods []KubernetesPod `json:"pods,omitempty"`
+}
+
+// KubernetesPod represents a Kubernetes Pod
+type KubernetesPod struct {
+	KubernetesBase
+	Hostname string            `json:"hostname"`
+	Volumes  map[string]string `json:"volumes"`
 }
 
 // KubernetesBase contains common Kubernetes resource metadata
@@ -29,9 +63,20 @@ type KubernetesBase struct {
 	Labels      map[string]string `json:"labels,omitempty"`
 }
 
-// KubernetesNode represents a Kubernetes node
-type KubernetesNode struct {
-	KubernetesBase
+// KubernetesReference identifies a Kubernetes resource
+type KubernetesReference struct {
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name"`
+	UID       string `json:"uid"`
+}
+
+// Kubernetes contains global Kubernetes resources
+type Kubernetes struct {
+	Namespaces             []KubernetesNamespace             `json:"namespaces"`
+	StorageClasses         []KubernetesStorageClass          `json:"storageClasses"`
+	PersistentVolumeClaims []KubernetesPersistentVolumeClaim `json:"persistentVolumeClaims"`
+	PersistentVolumes      []KubernetesPersistentVolume      `json:"persistentVolumes"`
 }
 
 // KubernetesNamespace represents a Kubernetes namespace
@@ -50,7 +95,7 @@ type KubernetesStorageClass struct {
 	IsDefault            bool   `json:"isDefault"`
 }
 
-// KubernetesPersistentVolumeClaim represents a PVC
+// KubernetesPersistentVolumeClaim represents a Kubernetes persistent volume claim
 type KubernetesPersistentVolumeClaim struct {
 	KubernetesBase
 	StorageClassName string   `json:"storageClassName"`
@@ -61,7 +106,7 @@ type KubernetesPersistentVolumeClaim struct {
 	VolumeName       string   `json:"volumeName"`
 }
 
-// KubernetesPersistentVolume represents a PV
+// KubernetesPersistentVolume represents a Kubernetes persistent volume
 type KubernetesPersistentVolume struct {
 	KubernetesBase
 	StorageClassName string                        `json:"storageClassName"`
@@ -82,77 +127,4 @@ type VolumeReference struct {
 	Node    string `json:"node"`
 	Storage string `json:"storage"`
 	Disk    string `json:"disk"`
-}
-
-// KubernetesPod represents a Pod
-type KubernetesPod struct {
-	KubernetesBase
-	Hostname string            `json:"hostname"`
-	NodeName string            `json:"nodeName"`
-	Volumes  map[string]string `json:"volumes"`
-}
-
-// Kubernetes contains all Kubernetes resources
-type Kubernetes struct {
-	Nodes                  []KubernetesNode                  `json:"nodes"`
-	Namespaces             []KubernetesNamespace             `json:"namespaces"`
-	StorageClasses         []KubernetesStorageClass          `json:"storageClasses"`
-	PersistentVolumes      []KubernetesPersistentVolume      `json:"persistentVolumes"`
-	PersistentVolumeClaims []KubernetesPersistentVolumeClaim `json:"persistentVolumeClaims"`
-	Pods                   []KubernetesPod                   `json:"pods"`
-}
-
-// ProxmoxCluster represents a Proxmox cluster
-type ProxmoxCluster struct {
-	Name   string `json:"name"`
-	Region string `json:"region"`
-}
-
-// ProxmoxNode represents a Proxmox host
-type ProxmoxNode struct {
-	ClusterName string `json:"clusterName"`
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-}
-
-// ProxmoxVM represents a Proxmox VM
-type ProxmoxVM struct {
-	ClusterName string `json:"clusterName"`
-	NodeName    string `json:"nodeName"`
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Status      string `json:"status"`
-}
-
-// ProxmoxDisk represents a Proxmox disk
-type ProxmoxDisk struct {
-	ClusterName     string           `json:"clusterName"`
-	StorageID       string           `json:"storageId"`
-	Name            string           `json:"name"`
-	SizeBytes       int64            `json:"sizeBytes"`
-	VolumeReference *VolumeReference `json:"volumeReference"`
-}
-
-// ProxmoxSharedDisk represents a shared Proxmox disk
-type ProxmoxSharedDisk struct {
-	ProxmoxDisk
-	AttachedGuestIDs []string `json:"attachedGuestIds"`
-}
-
-// ProxmoxLocalDisk represents a local Proxmox disk
-type ProxmoxLocalDisk struct {
-	ProxmoxDisk
-	NodeID           string   `json:"nodeId"`
-	AttachedGuestIDs []string `json:"attachedGuestIds"`
-}
-
-// Proxmox contains all Proxmox resources
-type Proxmox struct {
-	Clusters    []ProxmoxCluster    `json:"clusters"`
-	Nodes       []ProxmoxNode       `json:"nodes"`
-	VMs         []ProxmoxVM         `json:"vms"`
-	SharedDisks []ProxmoxSharedDisk `json:"sharedDisks"`
-	LocalDisks  []ProxmoxLocalDisk  `json:"localDisks"`
 }
