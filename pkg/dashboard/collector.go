@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	goproxmox "github.com/luthermonson/go-proxmox"
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/csi"
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/proxmoxpool"
 	volutil "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/volume"
@@ -24,6 +25,11 @@ type Collector struct {
 type proxmoxDiskUsage struct {
 	AttachedVMIDs []string
 	AttachedNode  string
+}
+
+type proxmoxStorageMeta struct {
+	Shared bool
+	Nodes  []string
 }
 
 // Collect gathers all Kubernetes and Proxmox resources and returns a snapshot
@@ -367,6 +373,7 @@ func (c *Collector) collectPods(ctx context.Context, pvcs []KubernetesPersistent
 // collectProxmox gathers all Proxmox resources
 func (c *Collector) collectProxmox(ctx context.Context, k8s Kubernetes) Proxmox {
 	proxmox := Proxmox{}
+	storageMeta := c.collectProxmoxStorageMeta(ctx, k8s.PersistentVolumes)
 
 	// Determine which regions and zones we need to monitor based on used volumes
 	regionsNeeded := c.getRegionsFromVolumes(k8s.PersistentVolumes)
@@ -375,9 +382,51 @@ func (c *Collector) collectProxmox(ctx context.Context, k8s Kubernetes) Proxmox 
 	proxmox.Clusters = c.collectProxmoxClusters(ctx, regionsNeeded)
 
 	// Collect Proxmox nodes and disks
-	proxmox.Nodes, proxmox.SharedDisks, proxmox.LocalDisks = c.collectProxmoxResources(ctx, k8s, regionsNeeded)
+	proxmox.Nodes, proxmox.SharedDisks, proxmox.LocalDisks = c.collectProxmoxResources(ctx, k8s, regionsNeeded, storageMeta)
 
 	return proxmox
+}
+
+func (c *Collector) collectProxmoxStorageMeta(ctx context.Context, pvs []KubernetesPersistentVolume) map[string]map[string]proxmoxStorageMeta {
+	byRegion := map[string]map[string]struct{}{}
+	for _, pv := range pvs {
+		if pv.VolumeReference == nil {
+			continue
+		}
+		region := pv.VolumeReference.Region
+		storage := pv.VolumeReference.Storage
+		if byRegion[region] == nil {
+			byRegion[region] = map[string]struct{}{}
+		}
+		byRegion[region][storage] = struct{}{}
+	}
+
+	result := map[string]map[string]proxmoxStorageMeta{}
+	for region, storages := range byRegion {
+		px, err := c.proxmox.GetProxmoxCluster(region)
+		if err != nil {
+			continue
+		}
+
+		regionMeta := map[string]proxmoxStorageMeta{}
+		for storage := range storages {
+			storageConfig, err := px.GetClusterStorage(ctx, storage)
+			if err != nil {
+				klog.ErrorS(err, "failed to get proxmox storage config", "region", region, "storage", storage)
+				continue
+			}
+
+			regionMeta[storage] = proxmoxStorageMeta{
+				Shared: storageConfig.Shared == 1,
+				Nodes:  splitCSV(storageConfig.Nodes),
+			}
+		}
+		if len(regionMeta) > 0 {
+			result[region] = regionMeta
+		}
+	}
+
+	return result
 }
 
 // getRegionsFromVolumes extracts regions and zones from volumes
@@ -435,7 +484,7 @@ func (c *Collector) collectProxmoxClusters(ctx context.Context, regionsNeeded ma
 }
 
 // collectProxmoxResources gathers Proxmox VMs and disks
-func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes, regionsNeeded map[string]map[string]bool) (
+func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes, regionsNeeded map[string]map[string]bool, storageMeta map[string]map[string]proxmoxStorageMeta) (
 	[]ProxmoxNode, []ProxmoxSharedDisk, []ProxmoxLocalDisk) {
 
 	var nodes []ProxmoxNode
@@ -443,7 +492,7 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 	var localDisks []ProxmoxLocalDisk
 
 	// Track which disks are used and attached to which VMs.
-	diskUsage := c.analyzeDiskUsage(ctx, k8s.PersistentVolumes, regionsNeeded)
+	diskUsage := c.analyzeDiskUsage(ctx, k8s.PersistentVolumes, regionsNeeded, storageMeta)
 
 	for region := range regionsNeeded {
 		px, err := c.proxmox.GetProxmoxCluster(region)
@@ -495,30 +544,31 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		node := pv.VolumeReference.Node
 		storage := pv.VolumeReference.Storage
 		diskName := pv.VolumeReference.Disk
-		zone := pv.VolumeReference.Zone
-		key := diskUsageKey(region, zone, storage, diskName)
+		meta := storageMeta[region][storage]
+		shared := meta.Shared
+		key := diskUsageKey(region, node, storage, diskName, shared)
 		usage := diskUsage[key]
 
 		volumeRef := &VolumeReference{
 			Region:  region,
+			Zone:    pv.VolumeReference.Zone,
+			Node:    node,
 			Storage: storage,
 			Disk:    diskName,
 		}
-		if zone == "" {
+		if shared {
 			// shared disks are identified by the storage/volume only.
 			volumeRef.Node = ""
 		} else {
 			if usage.AttachedNode != "" {
 				volumeRef.Node = usage.AttachedNode
-				volumeRef.Zone = usage.AttachedNode
-			} else {
-				volumeRef.Node = node
-				volumeRef.Zone = zone
+			} else if len(meta.Nodes) > 0 {
+				volumeRef.Node = meta.Nodes[0]
 			}
 		}
 
-		// Determine if it's a shared disk (no zone) or local disk
-		if zone == "" {
+		// Determine if it's a shared disk using cluster storage metadata.
+		if shared {
 			// Shared disk
 			disk := ProxmoxSharedDisk{
 				ProxmoxDisk: ProxmoxDisk{
@@ -536,7 +586,11 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 			attachedVMID := firstString(usage.AttachedVMIDs)
 			attachedNode := usage.AttachedNode
 			if attachedNode == "" {
-				attachedNode = node
+				if len(meta.Nodes) > 0 {
+					attachedNode = meta.Nodes[0]
+				} else {
+					attachedNode = node
+				}
 			}
 
 			var vmIDPtr *string
@@ -563,7 +617,7 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 }
 
 // analyzeDiskUsage maps disks to the actual Proxmox VM IDs that have them attached.
-func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersistentVolume, regionsNeeded map[string]map[string]bool) map[string]proxmoxDiskUsage {
+func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersistentVolume, regionsNeeded map[string]map[string]bool, storageMeta map[string]map[string]proxmoxStorageMeta) map[string]proxmoxDiskUsage {
 	diskToVMs := make(map[string]proxmoxDiskUsage)
 
 	for region := range regionsNeeded {
@@ -583,7 +637,7 @@ func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersis
 			continue
 		}
 
-		candidateNodesCache := map[string][]string{}
+		vmConfigCache := map[uint64]*goproxmox.VirtualMachine{}
 
 		for _, pv := range pvs {
 			if pv.VolumeReference == nil || pv.VolumeReference.Region != region {
@@ -595,24 +649,15 @@ func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersis
 				continue
 			}
 
-			key := diskUsageKey(region, vol.Zone(), vol.Storage(), vol.Disk())
+			meta := storageMeta[region][vol.Storage()]
+			key := diskUsageKey(region, vol.Node(), vol.Storage(), vol.Disk(), meta.Shared)
 			if _, ok := diskToVMs[key]; ok {
 				continue
 			}
 
-			candidateNodes := []string{}
-			if vol.Node() != "" {
+			candidateNodes := meta.Nodes
+			if len(candidateNodes) == 0 && vol.Node() != "" {
 				candidateNodes = []string{vol.Node()}
-			} else {
-				if nodes, ok := candidateNodesCache[vol.Storage()]; ok {
-					candidateNodes = nodes
-				} else {
-					nodes, err := px.GetNodesForStorage(ctx, vol.Storage())
-					if err == nil {
-						candidateNodesCache[vol.Storage()] = nodes
-						candidateNodes = nodes
-					}
-				}
 			}
 
 			usage := proxmoxDiskUsage{}
@@ -624,9 +669,14 @@ func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersis
 					continue
 				}
 
-				vm, err := px.GetVMConfig(ctx, int(r.VMID))
-				if err != nil {
-					continue
+				vm, ok := vmConfigCache[r.VMID]
+				if !ok {
+					var err error
+					vm, err = px.GetVMConfig(ctx, int(r.VMID))
+					if err != nil {
+						continue
+					}
+					vmConfigCache[r.VMID] = vm
 				}
 
 				if !diskConfigContains(vm.VirtualMachineConfig.MergeDisks(), vol.Disk()) {
@@ -649,12 +699,16 @@ func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersis
 	return diskToVMs
 }
 
-func diskUsageKey(region, zone, storage, disk string) string {
-	if zone == "" {
+func diskUsageKey(region, node, storage, disk string, shared bool) string {
+	if shared {
 		return region + "/" + storage + "/" + disk
 	}
 
-	return region + "/" + zone + "/" + storage + "/" + disk
+	if node == "" {
+		return region + "/" + storage + "/" + disk
+	}
+
+	return region + "/" + node + "/" + storage + "/" + disk
 }
 
 func diskConfigContains(disks map[string]string, disk string) bool {
@@ -698,4 +752,16 @@ func firstString(values []string) string {
 	}
 
 	return values[0]
+}
+
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
 }
