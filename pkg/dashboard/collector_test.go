@@ -143,6 +143,21 @@ func TestCollectorCollectsPods(t *testing.T) {
 	}
 }
 
+func TestDiskUsageKeyAndMatching(t *testing.T) {
+	if got, want := diskUsageKey("region-1", "", "storage", "vm-100-disk-0"), "region-1/storage/vm-100-disk-0"; got != want {
+		t.Fatalf("unexpected shared key: got %q want %q", got, want)
+	}
+	if got, want := diskUsageKey("region-1", "node-1", "storage", "vm-100-disk-0"), "region-1/node-1/storage/vm-100-disk-0"; got != want {
+		t.Fatalf("unexpected local key: got %q want %q", got, want)
+	}
+	if !matchesDiskValue("local-lvm:vm-100-disk-0,backup=1", "vm-100-disk-0") {
+		t.Fatalf("expected disk value to match")
+	}
+	if matchesDiskValue("local-lvm:vm-101-disk-0,backup=1", "vm-100-disk-0") {
+		t.Fatalf("did not expect disk value to match")
+	}
+}
+
 func ptr(s string) *string {
 	return &s
 }

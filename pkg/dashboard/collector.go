@@ -3,6 +3,8 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/csi"
@@ -17,6 +19,11 @@ import (
 type Collector struct {
 	kube    kubernetes.Interface
 	proxmox *proxmoxpool.ProxmoxPool
+}
+
+type proxmoxDiskUsage struct {
+	AttachedVMIDs []string
+	AttachedNode  string
 }
 
 // Collect gathers all Kubernetes and Proxmox resources and returns a snapshot
@@ -435,8 +442,8 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 	var sharedDisks []ProxmoxSharedDisk
 	var localDisks []ProxmoxLocalDisk
 
-	// Track which disks are used and attached to which VMs
-	diskUsage := c.analyzeDiskUsage(k8s.PersistentVolumes)
+	// Track which disks are used and attached to which VMs.
+	diskUsage := c.analyzeDiskUsage(ctx, k8s.PersistentVolumes, regionsNeeded)
 
 	for region := range regionsNeeded {
 		px, err := c.proxmox.GetProxmoxCluster(region)
@@ -455,9 +462,14 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 			continue
 		}
 
-		// Collect nodes (VMs and LXCs) that are in zones we care about
+		wantedNodes := regionsNeeded[region]
+		// Collect nodes (VMs and LXCs) that are in zones we care about.
+		// If no zone is specified for the region, include all VM/LXC resources.
 		for _, r := range resources {
-			if (r.Type != "qemu" && r.Type != "lxc") || regionsNeeded[region][r.Node] == false {
+			if r.Type != "qemu" && r.Type != "lxc" {
+				continue
+			}
+			if len(wantedNodes) > 0 && !wantedNodes[r.Node] {
 				continue
 			}
 
@@ -484,24 +496,47 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		storage := pv.VolumeReference.Storage
 		diskName := pv.VolumeReference.Disk
 		zone := pv.VolumeReference.Zone
+		key := diskUsageKey(region, zone, storage, diskName)
+		usage := diskUsage[key]
+
+		volumeRef := &VolumeReference{
+			Region:  region,
+			Storage: storage,
+			Disk:    diskName,
+		}
+		if zone == "" {
+			// shared disks are identified by the storage/volume only.
+			volumeRef.Node = ""
+		} else {
+			if usage.AttachedNode != "" {
+				volumeRef.Node = usage.AttachedNode
+				volumeRef.Zone = usage.AttachedNode
+			} else {
+				volumeRef.Node = node
+				volumeRef.Zone = zone
+			}
+		}
 
 		// Determine if it's a shared disk (no zone) or local disk
-		if zone == node || zone == "" {
+		if zone == "" {
 			// Shared disk
 			disk := ProxmoxSharedDisk{
 				ProxmoxDisk: ProxmoxDisk{
-					StorageID: storage,
-					Name:      diskName,
-					SizeBytes: 0, // Would need to query Proxmox to get actual size
+					ClusterName:     region,
+					StorageID:       storage,
+					Name:            diskName,
+					SizeBytes:       0, // Would need to query Proxmox to get actual size
+					VolumeReference: volumeRef,
 				},
-				AttachedVMIds: diskUsage[region+"/"+storage+"/"+diskName],
+				AttachedVMIds: usage.AttachedVMIDs,
 			}
 			sharedDisks = append(sharedDisks, disk)
 		} else {
 			// Local disk
-			attachedVMID := ""
-			if len(diskUsage[region+"/"+zone+"/"+storage+"/"+diskName]) > 0 {
-				attachedVMID = diskUsage[region+"/"+zone+"/"+storage+"/"+diskName][0]
+			attachedVMID := firstString(usage.AttachedVMIDs)
+			attachedNode := usage.AttachedNode
+			if attachedNode == "" {
+				attachedNode = node
 			}
 
 			var vmIDPtr *string
@@ -511,11 +546,13 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 
 			disk := ProxmoxLocalDisk{
 				ProxmoxDisk: ProxmoxDisk{
-					StorageID: storage,
-					Name:      diskName,
-					SizeBytes: 0, // Would need to query Proxmox to get actual size
+					ClusterName:     region,
+					StorageID:       storage,
+					Name:            diskName,
+					SizeBytes:       0, // Would need to query Proxmox to get actual size
+					VolumeReference: volumeRef,
 				},
-				NodeID:       zone,
+				NodeID:       attachedNode,
 				AttachedVMID: vmIDPtr,
 			}
 			localDisks = append(localDisks, disk)
@@ -525,38 +562,140 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 	return nodes, sharedDisks, localDisks
 }
 
-// analyzeDiskUsage builds a map of which VMs have which disks
-func (c *Collector) analyzeDiskUsage(pvs []KubernetesPersistentVolume) map[string][]string {
-	diskToVMs := make(map[string][]string)
+// analyzeDiskUsage maps disks to the actual Proxmox VM IDs that have them attached.
+func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersistentVolume, regionsNeeded map[string]map[string]bool) map[string]proxmoxDiskUsage {
+	diskToVMs := make(map[string]proxmoxDiskUsage)
 
-	for _, pv := range pvs {
-		if pv.VolumeReference == nil {
-			continue
-		}
-
-		// Extract VM ID from disk name if present
-		vol, err := volutil.NewVolumeFromVolumeID(pv.VolumeHandle)
+	for region := range regionsNeeded {
+		px, err := c.proxmox.GetProxmoxCluster(region)
 		if err != nil {
 			continue
 		}
 
-		vmID := vol.VMID()
-		if vmID == "" {
+		cl, err := px.Cluster(ctx)
+		if err != nil {
 			continue
 		}
 
-		node := pv.VolumeReference.Node
-		zone := pv.VolumeReference.Zone
-
-		var key string
-		if zone == node || zone == "" {
-			key = vol.VolumeSharedID()
-		} else {
-			key = vol.VolumeID()
+		resources, err := cl.Resources(ctx, "vm")
+		if err != nil {
+			klog.ErrorS(err, "failed to get VM resources", "region", region)
+			continue
 		}
 
-		diskToVMs[key] = append(diskToVMs[key], vmID)
+		candidateNodesCache := map[string][]string{}
+
+		for _, pv := range pvs {
+			if pv.VolumeReference == nil || pv.VolumeReference.Region != region {
+				continue
+			}
+
+			vol, err := volutil.NewVolumeFromVolumeID(pv.VolumeHandle)
+			if err != nil {
+				continue
+			}
+
+			key := diskUsageKey(region, vol.Zone(), vol.Storage(), vol.Disk())
+			if _, ok := diskToVMs[key]; ok {
+				continue
+			}
+
+			candidateNodes := []string{}
+			if vol.Node() != "" {
+				candidateNodes = []string{vol.Node()}
+			} else {
+				if nodes, ok := candidateNodesCache[vol.Storage()]; ok {
+					candidateNodes = nodes
+				} else {
+					nodes, err := px.GetNodesForStorage(ctx, vol.Storage())
+					if err == nil {
+						candidateNodesCache[vol.Storage()] = nodes
+						candidateNodes = nodes
+					}
+				}
+			}
+
+			usage := proxmoxDiskUsage{}
+			for _, r := range resources {
+				if r.Type != "qemu" && r.Type != "lxc" {
+					continue
+				}
+				if len(candidateNodes) > 0 && !containsString(candidateNodes, r.Node) {
+					continue
+				}
+
+				vm, err := px.GetVMConfig(ctx, int(r.VMID))
+				if err != nil {
+					continue
+				}
+
+				if !diskConfigContains(vm.VirtualMachineConfig.MergeDisks(), vol.Disk()) {
+					continue
+				}
+
+				vmID := strconv.FormatUint(r.VMID, 10)
+				if !containsString(usage.AttachedVMIDs, vmID) {
+					usage.AttachedVMIDs = append(usage.AttachedVMIDs, vmID)
+				}
+				if usage.AttachedNode == "" {
+					usage.AttachedNode = r.Node
+				}
+			}
+
+			diskToVMs[key] = usage
+		}
 	}
 
 	return diskToVMs
+}
+
+func diskUsageKey(region, zone, storage, disk string) string {
+	if zone == "" {
+		return region + "/" + storage + "/" + disk
+	}
+
+	return region + "/" + zone + "/" + storage + "/" + disk
+}
+
+func diskConfigContains(disks map[string]string, disk string) bool {
+	for _, value := range disks {
+		if matchesDiskValue(value, disk) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func matchesDiskValue(value, disk string) bool {
+	if value == "" || disk == "" {
+		return false
+	}
+
+	if idx := strings.Index(value, ","); idx >= 0 {
+		value = value[:idx]
+	}
+	if idx := strings.Index(value, ":"); idx >= 0 {
+		value = value[idx+1:]
+	}
+
+	return value == disk || strings.Contains(value, disk)
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+
+	return false
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+
+	return values[0]
 }
