@@ -361,17 +361,51 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 				z.Name = zoneName
 			}
 
+			// check if disk already exists in the array (by StorageID and Name) before making API calls
+			storageID := vol.Storage()
+			diskName := vol.Disk()
+
+			// determine if it will be shared or local to decide which array to check
+			shared := false
+			if sc, ok := storageInfo[storageID]; ok {
+				switch sc.PluginType {
+				case "dir", "nfs", "cifs", "cephfs", "btrfs":
+					shared = true
+				}
+			}
+
+			diskExists := false
+			if shared {
+				for _, existing := range r.Disks {
+					if existing.StorageID == storageID && existing.Name == diskName {
+						diskExists = true
+						break
+					}
+				}
+			} else {
+				for _, existing := range z.Disks {
+					if existing.StorageID == storageID && existing.Name == diskName {
+						diskExists = true
+						break
+					}
+				}
+			}
+
+			if diskExists {
+				continue
+			}
+
 			// determine storage metadata once per storage
-			if _, ok := storageContents[vol.Storage()]; !ok {
-				storageContents[vol.Storage()] = map[string]*proxmox.StorageContent{}
+			if _, ok := storageContents[storageID]; !ok {
+				storageContents[storageID] = map[string]*proxmox.StorageContent{}
 				// attempt to get storage content for the node
 				if vol.Node() != "" {
-					if _, err := px.GetStorageStatus(ctx, vol.Node(), vol.Storage()); err == nil {
-						contents, err := px.GetStorageContent(ctx, vol.Node(), vol.Storage())
+					if _, err := px.GetStorageStatus(ctx, vol.Node(), storageID); err == nil {
+						contents, err := px.GetStorageContent(ctx, vol.Node(), storageID)
 						if err == nil {
 							for i := range contents {
 								c := contents[i]
-								storageContents[vol.Storage()][c.Volid] = c
+								storageContents[storageID][c.Volid] = c
 							}
 						}
 					}
@@ -379,12 +413,12 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 			}
 
 			// build disk entry
-			disk := ProxmoxDisk{StorageID: vol.Storage(), Name: vol.Disk()}
-			if sc, ok := storageInfo[vol.Storage()]; ok {
+			disk := ProxmoxDisk{StorageID: storageID, Name: diskName}
+			if sc, ok := storageInfo[storageID]; ok {
 				_ = sc // keep for future use
 			}
 			// size
-			if scmap, ok := storageContents[vol.Storage()]; ok {
+			if scmap, ok := storageContents[storageID]; ok {
 				if st, ok := scmap[vol.VolID()]; ok {
 					size := int64(st.Size)
 					disk.SizeBytes = &size
@@ -395,38 +429,11 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 				disk.AttachedVMIDs = append(disk.AttachedVMIDs, vmsAttached...)
 			}
 
-			// categorize as local (zone) or shared (region)
-			// heuristic: if storageInfo plugin indicates file-based, consider shared
-			shared := false
-			if sc, ok := storageInfo[vol.Storage()]; ok {
-				switch sc.PluginType {
-				case "dir", "nfs", "cifs", "cephfs", "btrfs":
-					shared = true
-				}
-			}
-
-			// check if disk already exists in the array (by StorageID and Name)
-			diskExists := false
+			// append to the appropriate array
 			if shared {
-				for _, existing := range r.Disks {
-					if existing.StorageID == disk.StorageID && existing.Name == disk.Name {
-						diskExists = true
-						break
-					}
-				}
-				if !diskExists {
-					r.Disks = append(r.Disks, disk)
-				}
+				r.Disks = append(r.Disks, disk)
 			} else {
-				for _, existing := range z.Disks {
-					if existing.StorageID == disk.StorageID && existing.Name == disk.Name {
-						diskExists = true
-						break
-					}
-				}
-				if !diskExists {
-					z.Disks = append(z.Disks, disk)
-				}
+				z.Disks = append(z.Disks, disk)
 			}
 			r.Zones[zoneName] = z
 		}
