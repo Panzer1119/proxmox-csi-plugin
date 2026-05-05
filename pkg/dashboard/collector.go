@@ -278,10 +278,10 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 
 	// build map vmid->k8s node name for quick lookup
 	vmidToNode := map[string]string{}
-	for _, vms := range vmsByRegion {
+	for region, vms := range vmsByRegion {
 		for _, v := range vms {
 			if v.RS != nil {
-				vmid := fmt.Sprintf("%d", v.RS.VMID)
+				vmid := fmt.Sprintf("%s/%s/%d", region, v.RS.Node, v.RS.VMID)
 				// try to match by VM UUID to node UUID via helper
 				if uuid := goproxmox.GetVMUUID(v.VM); uuid != "" {
 					for _, n := range relevantNodes {
@@ -424,7 +424,7 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 			}
 			pvm := ProxmoxVM{ID: fmt.Sprintf("%d", vm.RS.VMID), Name: vm.VM.Name}
 			// attach node/k8s info if available
-			if k8sNode, ok := vmidToNode[fmt.Sprintf("%d", vm.RS.VMID)]; ok {
+			if k8sNode, ok := vmidToNode[fmt.Sprintf("%s/%s/%d", region, vm.RS.Node, vm.RS.VMID)]; ok {
 				// populate KubernetesNode
 				kn := KubernetesNode{KubernetesBase: KubernetesBase{KubernetesReference: KubernetesReference{Kind: "Node", Name: k8sNode}}, Pods: []KubernetesPod{}}
 				// attach pods scheduled to this node
