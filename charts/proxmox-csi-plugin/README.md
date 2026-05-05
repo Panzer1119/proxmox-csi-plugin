@@ -154,6 +154,11 @@ helm upgrade -i --namespace=csi-proxmox -f proxmox-csi.yaml \
 | podSecurityContext | object | `{"fsGroup":65532,"fsGroupChangePolicy":"OnRootMismatch","runAsGroup":65532,"runAsNonRoot":true,"runAsUser":65532}` | Controller Security Context. ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod |
 | securityContext | object | `{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true,"seccompProfile":{"type":"RuntimeDefault"}}` | Controller Container Security Context. ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod |
 | updateStrategy | object | `{"rollingUpdate":{"maxUnavailable":1},"type":"RollingUpdate"}` | Controller deployment update strategy type. ref: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment |
+| dashboard | object | `{"address":":8088","enabled":false,"port":8088,"refreshInterval":"15s"}` | Topology dashboard settings. |
+| dashboard.enabled | bool | `false` | Enable built-in topology dashboard server in controller. |
+| dashboard.address | string | `":8088"` | Dashboard bind address flag value (host:port or :port). |
+| dashboard.refreshInterval | string | `"15s"` | Topology refresh interval. |
+| dashboard.port | int | `8088` | Service port exposed by the controller pod when dashboard is enabled. |
 | metrics | object | `{"enabled":false,"port":8080,"type":"annotation"}` | Prometheus metrics |
 | metrics.enabled | bool | `false` | Enable Prometheus metrics. |
 | metrics.port | int | `8080` | Prometheus metrics port. |

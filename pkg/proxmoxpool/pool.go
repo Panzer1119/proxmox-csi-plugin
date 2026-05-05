@@ -266,6 +266,112 @@ func (c *ProxmoxPool) FindVMByUUID(ctx context.Context, uuid string) (vmID int, 
 	return 0, "", ErrInstanceNotFound
 }
 
+type VMAndConfig struct {
+	RS *proxmox.ClusterResource
+	VM *proxmox.VirtualMachine
+}
+
+// FindVMsByNodes find VMs by kubernetes node resources in all Proxmox clusters.
+func (c *ProxmoxPool) FindVMsByNodes(ctx context.Context, nodes []*v1.Node) (map[string][]VMAndConfig, error) {
+	// quick guard
+	if c == nil || len(c.clients) == 0 {
+		return nil, ErrClustersNotFound
+	}
+
+	// Extract uuids
+	uuids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Status.NodeInfo.SystemUUID != "" {
+			uuids = append(uuids, n.Status.NodeInfo.SystemUUID)
+		}
+	}
+
+	if len(uuids) == 0 {
+		return nil, fmt.Errorf("no valid node UUIDs found")
+	}
+
+	return c.FindVMsByUUIDs(ctx, uuids)
+}
+
+// FindVMsByUUIDs find VMs by UUIDs in all Proxmox clusters.
+func (c *ProxmoxPool) FindVMsByUUIDs(ctx context.Context, uuids []string) (map[string][]VMAndConfig, error) {
+	// quick guard
+	if c == nil || len(c.clients) == 0 {
+		return nil, ErrClustersNotFound
+	}
+
+	// Build a set for O(1) lookups
+	uuidSet := make(map[string]struct{}, len(uuids))
+	for _, u := range uuids {
+		if u != "" {
+			uuidSet[u] = struct{}{}
+		}
+	}
+	if len(uuidSet) == 0 {
+		return nil, fmt.Errorf("no uuids provided")
+	}
+
+	remaining := len(uuidSet)
+
+	vmsByRegion := make(map[string][]VMAndConfig, len(c.clients))
+
+	for region, px := range c.clients {
+		if remaining == 0 {
+			break // found all
+		}
+
+		vms := make([]VMAndConfig, 0, len(uuidSet))
+
+		_, err := px.GetVMsByFilter(ctx, func(rs *proxmox.ClusterResource) (bool, error) {
+			if rs.Type != "qemu" {
+				return false, nil
+			}
+
+			vm, err := px.GetVMConfig(ctx, int(rs.VMID))
+			if err != nil {
+				return false, err
+			}
+
+			u := goproxmox.GetVMUUID(vm)
+			if u == "" {
+				return false, nil
+			}
+
+			if _, ok := uuidSet[u]; ok {
+				vms = append(vms, VMAndConfig{
+					RS: rs,
+					VM: vm,
+				})
+				// mark found and remove from set so we can early-exit properly
+				delete(uuidSet, u)
+				remaining--
+				return true, nil
+			}
+
+			return false, nil
+		})
+
+		if err != nil {
+			if errors.Is(err, goproxmox.ErrVirtualMachineNotFound) {
+				// no VMs in this region, skip
+				continue
+			}
+			// return the underlying error with region context for better debugging
+			return nil, fmt.Errorf("region %s: %w", region, err)
+		}
+
+		if len(vms) > 0 {
+			vmsByRegion[region] = vms
+		}
+	}
+
+	if len(vmsByRegion) == 0 {
+		return nil, ErrInstanceNotFound
+	}
+
+	return vmsByRegion, nil
+}
+
 func readValueFromFile(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path cannot be empty")

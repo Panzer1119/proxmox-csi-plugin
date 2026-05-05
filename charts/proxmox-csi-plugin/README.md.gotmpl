@@ -93,3 +93,6 @@ helm upgrade -i --namespace=csi-proxmox -f proxmox-csi.yaml \
 ```
 
 {{ template "chart.valuesSection" . }}
+
+
+Dashboard options can be configured via `.Values.dashboard` to enable the integrated topology UI endpoint served by the controller pod.

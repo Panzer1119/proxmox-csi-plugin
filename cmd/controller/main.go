@@ -23,11 +23,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	proto "github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc"
 
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/csi"
+	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/dashboard"
 	tools "github.com/sergelogvinov/proxmox-csi-plugin/pkg/tools/kubernetes"
 
 	clientkubernetes "k8s.io/client-go/kubernetes"
@@ -45,8 +47,11 @@ var (
 	metricsAddress = flag.String("metrics-address", "", "The TCP network address where the HTTP server for metrics, will listen (example: `:8080`). By default the server is disabled.")
 	metricsPath    = flag.String("metrics-path", "/metrics", "The HTTP path where prometheus metrics will be exposed.")
 
-	cloudconfig = flag.String("cloud-config", "", "The path to the CSI driver cloud config.")
-	kubeconfig  = flag.String("kubeconfig", "", "Absolute path to the kubeconfig file. Either this or master needs to be set if the provisioner is being run out of cluster.")
+	cloudconfig      = flag.String("cloud-config", "", "The path to the CSI driver cloud config.")
+	kubeconfig       = flag.String("kubeconfig", "", "Absolute path to the kubeconfig file. Either this or master needs to be set if the provisioner is being run out of cluster.")
+	dashboardEnabled = flag.Bool("dashboard-enabled", false, "Enable topology dashboard server.")
+	dashboardAddress = flag.String("dashboard-address", ":8088", "Dashboard bind address.")
+	dashboardRefresh = flag.Duration("dashboard-refresh-interval", 15*time.Second, "Dashboard topology refresh interval.")
 )
 
 func main() {
@@ -131,6 +136,24 @@ func main() {
 	if err != nil {
 		klog.ErrorS(err, "Failed to create controller service")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+
+	if *dashboardEnabled {
+		dashboardServer, err := dashboard.New(dashboard.Config{
+			Enabled:         true,
+			BindAddress:     *dashboardAddress,
+			RefreshInterval: *dashboardRefresh,
+			CloudConfigPath: *cloudconfig,
+		}, clientset)
+		if err != nil {
+			klog.ErrorS(err, "Failed to create dashboard server")
+			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+		}
+		go func() {
+			if err := dashboardServer.Start(context.Background()); err != nil {
+				klog.ErrorS(err, "Dashboard server failed")
+			}
+		}()
 	}
 
 	proto.RegisterControllerServer(srv, controllerService)

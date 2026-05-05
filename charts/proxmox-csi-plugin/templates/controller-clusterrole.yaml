@@ -39,6 +39,12 @@ rules:
     resources: ["volumeattachments/status"]
     verbs: ["patch"]
 
+{{- if .Values.dashboard.enabled }}
+  - apiGroups: [""]
+    resources: ["namespaces", "pods"]
+    verbs: ["get", "list", "watch"]
+{{- end }}
+
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshots"]
     verbs: ["get", "list"]

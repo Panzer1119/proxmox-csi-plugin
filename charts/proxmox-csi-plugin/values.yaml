@@ -331,6 +331,40 @@ updateStrategy:
   rollingUpdate:
     maxUnavailable: 1
 
+# -- Topology dashboard settings.
+dashboard:
+  # -- Enable built-in topology dashboard server in controller.
+  enabled: false
+  # -- Dashboard bind address flag value (host:port or :port).
+  address: ":8088"
+  # -- Topology refresh interval.
+  refreshInterval: 15s
+  # -- Service port exposed by the controller pod when dashboard is enabled.
+  port: 8088
+
+  # -- Dashboard service and ingress configuration.
+  ingress:
+    # -- Enable ingress for dashboard.
+    enabled: false
+    # -- Ingress class name.
+    className: ""
+    # -- Ingress annotations.
+    annotations: {}
+      # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # -- Ingress hosts configuration.
+    # ref: https://kubernetes.io/docs/concepts/services-networking/ingress/#the-ingress-resource
+    hosts:
+      - host: dashboard.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    # -- Ingress TLS configuration.
+    # ref: https://kubernetes.io/docs/concepts/services-networking/ingress/#tls
+    tls: []
+      # - secretName: dashboard-tls
+      #   hosts:
+      #     - dashboard.example.com
+
 # -- Prometheus metrics
 metrics:
   # -- Enable Prometheus metrics.
