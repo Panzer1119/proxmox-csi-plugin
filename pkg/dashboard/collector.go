@@ -28,8 +28,8 @@ type Collector struct {
 }
 
 type proxmoxDiskUsage struct {
-	AttachedVMIDs []string
-	AttachedNode  string
+	AttachedGuestIDs []string
+	AttachedNode     string
 }
 
 type proxmoxStorageMeta struct {
@@ -625,8 +625,8 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		}
 
 		// Track used VMs and nodes
-		for _, vmID := range usage.AttachedVMIDs {
-			usedVMs[region+"/"+vmID] = true
+		for _, guestID := range usage.AttachedGuestIDs {
+			usedVMs[region+"/"+guestID] = true
 		}
 		if usage.AttachedNode != "" {
 			usedNodes[usage.AttachedNode] = true
@@ -645,12 +645,11 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 					SizeBytes:       0, // Would need to query Proxmox to get actual size
 					VolumeReference: volumeRef,
 				},
-				AttachedVMIds: usage.AttachedVMIDs,
+				AttachedGuestIDs: usage.AttachedGuestIDs,
 			}
 			sharedDisks = append(sharedDisks, disk)
 		} else {
 			// Local disk
-			attachedVMID := firstString(usage.AttachedVMIDs)
 			attachedNode := usage.AttachedNode
 			if attachedNode == "" {
 				if len(meta.Nodes) > 0 {
@@ -658,11 +657,6 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 				} else {
 					attachedNode = node
 				}
-			}
-
-			var vmIDPtr *string
-			if attachedVMID != "" {
-				vmIDPtr = &attachedVMID
 			}
 
 			disk := ProxmoxLocalDisk{
@@ -673,8 +667,8 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 					SizeBytes:       0, // Would need to query Proxmox to get actual size
 					VolumeReference: volumeRef,
 				},
-				NodeID:       attachedNode,
-				AttachedVMID: vmIDPtr,
+				NodeID:           attachedNode,
+				AttachedGuestIDs: usage.AttachedGuestIDs,
 			}
 			localDisks = append(localDisks, disk)
 		}
@@ -829,8 +823,8 @@ func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersis
 				}
 
 				vmID := strconv.FormatUint(r.VMID, 10)
-				if !containsString(usage.AttachedVMIDs, vmID) {
-					usage.AttachedVMIDs = append(usage.AttachedVMIDs, vmID)
+				if !containsString(usage.AttachedGuestIDs, vmID) {
+					usage.AttachedGuestIDs = append(usage.AttachedGuestIDs, vmID)
 				}
 				if usage.AttachedNode == "" {
 					usage.AttachedNode = r.Node

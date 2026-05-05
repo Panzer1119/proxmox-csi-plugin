@@ -138,14 +138,14 @@ type ProxmoxDisk struct {
 // ProxmoxSharedDisk represents a shared Proxmox disk
 type ProxmoxSharedDisk struct {
 	ProxmoxDisk
-	AttachedVMIds []string `json:"attachedVMIds"`
+	AttachedGuestIDs []string `json:"attachedGuestIds"`
 }
 
 // ProxmoxLocalDisk represents a local Proxmox disk
 type ProxmoxLocalDisk struct {
 	ProxmoxDisk
-	NodeID       string  `json:"nodeId"`
-	AttachedVMID *string `json:"attachedVMId,omitempty"`
+	NodeID           string   `json:"nodeId"`
+	AttachedGuestIDs []string `json:"attachedGuestIds"`
 }
 
 // Proxmox contains all Proxmox resources
