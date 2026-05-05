@@ -103,12 +103,20 @@ type ProxmoxCluster struct {
 	Region string `json:"region"`
 }
 
-// ProxmoxNode represents a Proxmox VM/LXC
+// ProxmoxNode represents a Proxmox host
 type ProxmoxNode struct {
 	ClusterName string `json:"clusterName"`
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+}
+
+// ProxmoxVM represents a Proxmox VM
+type ProxmoxVM struct {
+	ClusterName string `json:"clusterName"`
+	NodeName    string `json:"nodeName"`
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	NodeID      string `json:"nodeId"`
 	Type        string `json:"type"`
 	Status      string `json:"status"`
 }
@@ -139,6 +147,7 @@ type ProxmoxLocalDisk struct {
 type Proxmox struct {
 	Clusters    []ProxmoxCluster    `json:"clusters"`
 	Nodes       []ProxmoxNode       `json:"nodes"`
+	VMs         []ProxmoxVM         `json:"vms"`
 	SharedDisks []ProxmoxSharedDisk `json:"sharedDisks"`
 	LocalDisks  []ProxmoxLocalDisk  `json:"localDisks"`
 }

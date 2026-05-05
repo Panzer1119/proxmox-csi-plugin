@@ -347,19 +347,19 @@ func (c *Collector) collectPods(ctx context.Context, pvcs []KubernetesPersistent
 
 // collectProxmox gathers all Proxmox resources
 func (c *Collector) collectProxmox(ctx context.Context, k8s Kubernetes) Proxmox {
-	proxmox := Proxmox{}
+	result := Proxmox{}
 	storageMeta := c.collectProxmoxStorageMeta(ctx, k8s.PersistentVolumes)
 
 	// Determine which regions and zones we need to monitor based on used volumes
 	regionsNeeded := c.getRegionsFromVolumes(k8s.PersistentVolumes)
 
 	// Collect Proxmox clusters
-	proxmox.Clusters = c.collectProxmoxClusters(ctx, regionsNeeded)
+	result.Clusters = c.collectProxmoxClusters(ctx, regionsNeeded)
 
-	// Collect Proxmox nodes and disks
-	proxmox.Nodes, proxmox.SharedDisks, proxmox.LocalDisks = c.collectProxmoxResources(ctx, k8s, regionsNeeded, storageMeta)
+	// Collect Proxmox hosts, VMs and disks
+	result.Nodes, result.VMs, result.SharedDisks, result.LocalDisks = c.collectProxmoxResources(ctx, k8s, regionsNeeded, storageMeta)
 
-	return proxmox
+	return result
 }
 
 func (c *Collector) collectProxmoxStorageMeta(ctx context.Context, pvs []KubernetesPersistentVolume) map[string]map[string]proxmoxStorageMeta {
@@ -458,11 +458,12 @@ func (c *Collector) collectProxmoxClusters(ctx context.Context, regionsNeeded ma
 	return result
 }
 
-// collectProxmoxResources gathers Proxmox VMs and disks
+// collectProxmoxResources gathers Proxmox hosts, VMs and disks
 func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes, regionsNeeded map[string]map[string]bool, storageMeta map[string]map[string]proxmoxStorageMeta) (
-	[]ProxmoxNode, []ProxmoxSharedDisk, []ProxmoxLocalDisk) {
+	[]ProxmoxNode, []ProxmoxVM, []ProxmoxSharedDisk, []ProxmoxLocalDisk) {
 
 	var nodes []ProxmoxNode
+	var vms []ProxmoxVM
 	var sharedDisks []ProxmoxSharedDisk
 	var localDisks []ProxmoxLocalDisk
 
@@ -475,6 +476,15 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		if err != nil {
 			klog.ErrorS(err, "failed to get proxmox cluster", "region", region)
 			continue
+		}
+
+		hosts, err := px.Nodes(ctx)
+		if err != nil {
+			klog.ErrorS(err, "failed to get proxmox nodes", "region", region)
+		} else {
+			for _, host := range hosts {
+				nodes = append(nodes, proxmoxNodeFromStatus(region, host))
+			}
 		}
 
 		cl, err := px.Cluster(ctx)
@@ -503,15 +513,7 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 				continue
 			}
 
-			pnode := ProxmoxNode{
-				ClusterName: region,
-				ID:          fmt.Sprintf("%d", r.VMID),
-				Name:        r.Name,
-				NodeID:      r.Node,
-				Type:        r.Type,
-				Status:      r.Status,
-			}
-			nodes = append(nodes, pnode)
+			vms = append(vms, proxmoxVMFromResource(region, r))
 		}
 	}
 
@@ -600,7 +602,48 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		}
 	}
 
-	return nodes, sharedDisks, localDisks
+	return nodes, vms, sharedDisks, localDisks
+}
+
+func proxmoxNodeFromStatus(region string, status *proxmox.NodeStatus) ProxmoxNode {
+	if status == nil {
+		return ProxmoxNode{ClusterName: region}
+	}
+
+	return ProxmoxNode{
+		ClusterName: region,
+		ID:          status.NodeID,
+		Name:        status.Name,
+		Status:      status.Status,
+	}
+}
+
+func proxmoxNodeFromResource(region string, resource *proxmox.Node) ProxmoxNode {
+	if resource == nil {
+		return ProxmoxNode{ClusterName: region}
+	}
+
+	return ProxmoxNode{
+		ClusterName: region,
+		ID:          -1,
+		Name:        resource.Name,
+		Status:      "unknown",
+	}
+}
+
+func proxmoxVMFromResource(region string, resource *proxmox.ClusterResource) ProxmoxVM {
+	if resource == nil {
+		return ProxmoxVM{ClusterName: region}
+	}
+
+	return ProxmoxVM{
+		ClusterName: region,
+		NodeName:    resource.Node,
+		ID:          fmt.Sprintf("%d", resource.VMID),
+		Name:        resource.Name,
+		Type:        resource.Type,
+		Status:      resource.Status,
+	}
 }
 
 // analyzeDiskUsage maps disks to the actual Proxmox VM IDs that have them attached.
