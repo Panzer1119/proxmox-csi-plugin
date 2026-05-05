@@ -47,7 +47,7 @@ function mermaidId(prefix, key) {
 }
 
 function esc(value) {
-    return String(value).replaceAll('"', '\\"');
+    return String(value).replaceAll('"', '#quot;');
 }
 
 function formatBytes(bytes) {
@@ -568,25 +568,49 @@ function buildMermaid(data) {
         return visible.has(key) && groupKeys.has(key) && byKey.get(key)?.type === 'group';
     }
 
-    function isValidParentGroup(item) {
-        if (!item.parentKey) {
-            return true;
+    function getNodeShape(item) {
+        if (item.kind === 'pvc') {
+            return `{{${esc(item.label)}}}`;
+        } else if (item.kind === 'pv') {
+            return `[(${esc(item.label)})]`;
+        } else if (item.kind === 'local-disk' || item.kind === 'shared-disk') {
+            return `[/${esc(item.label)}/]`;
         }
-        const parent = byKey.get(item.parentKey);
-        return Boolean(parent && parent.type === 'group' && visible.has(parent.key) && groupKeys.has(parent.key));
+        return `["${esc(item.label)}"]`;
     }
 
     function emitNode(item, depth) {
-        emitLine(`${item.mermaid}["${esc(item.label)}"]`, depth);
+        const shape = getNodeShape(item);
+        emitLine(`${item.mermaid}${shape}`, depth);
     }
 
     function emitService(key, depth) {
         const item = byKey.get(key);
-        if (!item || item.type !== 'service' || !visible.has(key) || emitted.has(key) || !isValidParentGroup(item)) {
+        if (!item || item.type !== 'service' || !visible.has(key) || emitted.has(key)) {
             return;
         }
         emitted.add(key);
         emitNode(item, depth);
+    }
+
+    function emitVmNodeGroup(vmKey, nodeKey, depth) {
+        const vmItem = byKey.get(vmKey);
+        const nodeItem = byKey.get(nodeKey);
+        if (!vmItem || !nodeItem || emitted.has(vmKey) || emitted.has(nodeKey)) {
+            return;
+        }
+        emitted.add(vmKey);
+        emitted.add(nodeKey);
+        const label = nodeItem.label && vmItem.label ? `${vmItem.label} / ${nodeItem.label}` : (nodeItem.label || vmItem.label || 'VM/Node');
+        emitLine(`subgraph ${vmItem.mermaid}["${esc(label)}"]`, depth);
+        emitLine('direction TD', depth + 1);
+        const childrenOfNode = childrenByParent.get(nodeKey) || [];
+        for (const child of childrenOfNode) {
+            if (child.type === 'service') {
+                emitService(child.key, depth + 1);
+            }
+        }
+        emitLine('end', depth);
     }
 
     function emitGroup(key, depth) {
@@ -595,11 +619,20 @@ function buildMermaid(data) {
             return;
         }
         emitted.add(key);
+        const shouldCombineVmNode = item.kind === 'qemu';
+        if (shouldCombineVmNode) {
+            const nodeChildren = childrenByParent.get(key) || [];
+            const nodeChild = nodeChildren.find(c => c.kind === 'k8s-node');
+            if (nodeChild && visible.has(nodeChild.key) && !emitted.has(nodeChild.key)) {
+                emitVmNodeGroup(key, nodeChild.key, depth);
+                return;
+            }
+        }
         emitLine(`subgraph ${item.mermaid}["${esc(item.label)}"]`, depth);
         emitLine('direction TD', depth + 1);
         const children = childrenByParent.get(key) || [];
         for (const child of children) {
-            if (child.type === 'group') {
+            if (child.type === 'group' && child.kind !== 'k8s-node') {
                 emitGroup(child.key, depth + 1);
             }
         }
@@ -611,15 +644,60 @@ function buildMermaid(data) {
         emitLine('end', depth);
     }
 
-    const roots = items
-        .filter(item => !item.parentKey && item.type === 'group')
-        .sort((a, b) => a.label.localeCompare(b.label));
-    for (const root of roots) {
-        emitGroup(root.key, 1);
+    const kubernetesRootKey = 'root|kubernetes';
+    if (isVisibleGroup(kubernetesRootKey)) {
+        const k8sRoot = byKey.get(kubernetesRootKey);
+        emitLine(`subgraph ${k8sRoot.mermaid}["${esc(k8sRoot.label)}"]`, 1);
+        emitLine('direction TD', 2);
+        const k8sChildren = childrenByParent.get(kubernetesRootKey) || [];
+        for (const child of k8sChildren) {
+            if (child.type === 'group') {
+                emitGroup(child.key, 2);
+            }
+        }
+        const storageClassItems = items.filter(item => item.kind === 'storageclass' && visible.has(item.key));
+        if (storageClassItems.length > 0) {
+            emitLine(`subgraph root_kubernetes_storage_classes["Storage Classes"]`, 2);
+            emitLine('direction TD', 3);
+            for (const scItem of storageClassItems) {
+                emitService(scItem.key, 3);
+            }
+            emitLine('end', 2);
+        }
+        const namespaceItems = items.filter(item => item.key.startsWith('namespace|') && item.parentKey === 'root|kubernetes|namespaces' && visible.has(item.key));
+        if (namespaceItems.length > 0) {
+            emitLine(`subgraph root_kubernetes_namespaces_container["Namespaces"]`, 2);
+            emitLine('direction TD', 3);
+            for (const nsItem of namespaceItems) {
+                if (!emitted.has(nsItem.key)) {
+                    emitted.add(nsItem.key);
+                    emitLine(`subgraph ${nsItem.mermaid}["${esc(nsItem.label)}"]`, 3);
+                    emitLine('direction TD', 4);
+                    const pvcChildren = childrenByParent.get(nsItem.key) || [];
+                    for (const pvc of pvcChildren) {
+                        if (pvc.type === 'service' && visible.has(pvc.key)) {
+                            emitService(pvc.key, 4);
+                        }
+                    }
+                    emitLine('end', 3);
+                }
+            }
+            emitLine('end', 2);
+        }
+        const pvItems = items.filter(item => item.kind === 'pv' && visible.has(item.key));
+        if (pvItems.length > 0) {
+            emitLine(`subgraph root_kubernetes_pvs["Persistent Volumes"]`, 2);
+            emitLine('direction TD', 3);
+            for (const pvItem of pvItems) {
+                emitService(pvItem.key, 3);
+            }
+            emitLine('end', 2);
+        }
+        emitLine('end', 1);
     }
 
     for (const item of items) {
-        if (item.type === 'group' && visible.has(item.key) && !emitted.has(item.key) && isValidParentGroup(item)) {
+        if (item.type === 'group' && visible.has(item.key) && !emitted.has(item.key)) {
             emitGroup(item.key, 1);
         }
     }
@@ -631,6 +709,7 @@ function buildMermaid(data) {
     }
 
     function addEdge(fromKey, toKey, kind, label) {
+        void label;
         if (!visible.has(fromKey) || !visible.has(toKey)) {
             return;
         }
@@ -640,9 +719,8 @@ function buildMermaid(data) {
             return;
         }
         const edgeId = `e${edgeSeq += 1}`;
-        const animate = kind === 'bound-to' || kind === 'backed-by';
-        const operator = animate ? '==>' : kind === 'provisioned-by' ? '-.->' : '-->';
-        void label;
+        const animate = kind === 'backed-by';
+        const operator = animate ? '==>' : '-->';
         emitLine(`${from.mermaid} ${edgeId}@${operator} ${to.mermaid}`);
         if (animate) {
             emitLine(`${edgeId}@{ animate: true }`);
