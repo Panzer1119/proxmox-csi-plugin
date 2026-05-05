@@ -1,1 +1,70 @@
-<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Proxmox CSI Topology</title><link rel='stylesheet' href='style.css'></head><body><header><h1>Proxmox + Kubernetes Topology</h1><input id='filter' placeholder='Filter resources...'><button id='copy'>Copy Mermaid Source</button><button id='copyFallback'>Copy Fallback Mermaid Source</button><span id='status'></span></header><main><div id='diagram-wrap'><pre class='mermaid' id='diagram'></pre></div><aside id='details'>Click a resource label to inspect metadata.</aside></main><script type='module' src='app.js'></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Proxmox CSI Dashboard</title>
+	<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+	<div class="dashboard-shell">
+		<header class="page-header">
+			<div class="page-header__title">
+				<p class="eyebrow">Proxmox CSI Plugin</p>
+				<h1>Cluster topology dashboard</h1>
+				<p id="generatedAt" class="muted">Waiting for snapshot…</p>
+			</div>
+			<div class="page-header__status">
+				<span id="status" class="status-pill" aria-live="polite"></span>
+			</div>
+		</header>
+
+		<section class="toolbar panel">
+			<div class="toolbar__search">
+				<label for="filter">Filter resources</label>
+				<input id="filter" type="search" placeholder="Search regions, zones, VMs, disks, PVCs…" autocomplete="off">
+			</div>
+			<div class="toolbar__actions">
+				<button id="copy" type="button">Copy Mermaid</button>
+				<button id="copyFallback" type="button" class="secondary">Copy fallback</button>
+			</div>
+			<div class="legend" aria-label="Legend">
+				<span class="legend__item"><span class="badge badge--accent">default</span> StorageClass marked as default</span>
+				<span class="legend__item"><span class="badge badge--success">privileged</span> Namespace with elevated policy</span>
+				<span class="legend__item"><span class="badge badge--warning">bound</span> Bound PVC / PV</span>
+				<span class="legend__item"><span class="badge badge--neutral">available</span> Other PV states</span>
+			</div>
+		</section>
+
+		<main class="workspace">
+			<section class="panel panel--diagram">
+				<div class="panel__header">
+					<div>
+						<p class="eyebrow">Topology</p>
+						<h2>Proxmox and Kubernetes resources</h2>
+					</div>
+					<p class="panel__hint">Click the diagram to refresh the raw snapshot details.</p>
+				</div>
+				<div id="diagram" class="diagram" role="img" aria-label="Cluster topology diagram"></div>
+			</section>
+
+			<aside class="panel panel--details">
+				<div class="panel__header">
+					<div>
+						<p class="eyebrow">Snapshot</p>
+						<h2>Model details</h2>
+					</div>
+					<p class="panel__hint">Derived directly from `pkg/dashboard/model.go`.</p>
+				</div>
+				<div class="panel__body">
+					<div id="summary" class="summary-grid"></div>
+					<pre id="details" class="details-json"></pre>
+				</div>
+			</aside>
+		</main>
+	</div>
+
+	<script type="module" src="./app.js"></script>
+</body>
+</html>
+
