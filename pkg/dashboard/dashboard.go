@@ -94,43 +94,9 @@ func (s *Server) runCollector(ctx context.Context, collector *Collector) {
 		}
 	}
 }
-
-func (s *Server) stripMetadata(snapshot Snapshot) Snapshot {
-	// Strip annotations and labels from all Kubernetes resources
-	for i := range snapshot.Kubernetes.Nodes {
-		snapshot.Kubernetes.Nodes[i].Annotations = nil
-		snapshot.Kubernetes.Nodes[i].Labels = nil
-	}
-	for i := range snapshot.Kubernetes.Namespaces {
-		snapshot.Kubernetes.Namespaces[i].Annotations = nil
-		snapshot.Kubernetes.Namespaces[i].Labels = nil
-	}
-	for i := range snapshot.Kubernetes.StorageClasses {
-		snapshot.Kubernetes.StorageClasses[i].Annotations = nil
-		snapshot.Kubernetes.StorageClasses[i].Labels = nil
-	}
-	for i := range snapshot.Kubernetes.PersistentVolumes {
-		snapshot.Kubernetes.PersistentVolumes[i].Annotations = nil
-		snapshot.Kubernetes.PersistentVolumes[i].Labels = nil
-	}
-	for i := range snapshot.Kubernetes.PersistentVolumeClaims {
-		snapshot.Kubernetes.PersistentVolumeClaims[i].Annotations = nil
-		snapshot.Kubernetes.PersistentVolumeClaims[i].Labels = nil
-	}
-	for i := range snapshot.Kubernetes.Pods {
-		snapshot.Kubernetes.Pods[i].Annotations = nil
-		snapshot.Kubernetes.Pods[i].Labels = nil
-	}
-	return snapshot
-}
-func (s *Server) handleTopology(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTopology(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	includeMetadata := r.URL.Query().Get("metadata") == "true"
-	snapshot := s.store.Get()
-	if !includeMetadata {
-		snapshot = s.stripMetadata(snapshot)
-	}
-	_ = json.NewEncoder(w).Encode(snapshot)
+	_ = json.NewEncoder(w).Encode(s.store.Get())
 }
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
