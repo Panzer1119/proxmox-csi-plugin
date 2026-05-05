@@ -402,11 +402,21 @@ func (c *Collector) collectProxmox(ctx context.Context, k8s Kubernetes) Proxmox 
 	// Determine which regions and zones we need to monitor based on used volumes
 	regionsNeeded := c.getRegionsFromVolumes(k8s.PersistentVolumes)
 
-	// Collect Proxmox clusters
-	result.Clusters = c.collectProxmoxClusters(ctx, regionsNeeded)
+	// Track which regions, nodes, and VMs are actually used by our plugin
+	usedRegions := make(map[string]bool)
+	usedNodes := make(map[string]bool)
+	usedVMs := make(map[string]bool) // Format: "region/vmid"
+
+	// Pre-populate with regions that have our volumes
+	for region := range regionsNeeded {
+		usedRegions[region] = true
+	}
 
 	// Collect Proxmox hosts, VMs and disks
-	result.Nodes, result.VMs, result.SharedDisks, result.LocalDisks = c.collectProxmoxResources(ctx, k8s, regionsNeeded, storageMeta)
+	result.Nodes, result.VMs, result.SharedDisks, result.LocalDisks = c.collectProxmoxResources(ctx, k8s, regionsNeeded, storageMeta, usedNodes, usedVMs)
+
+	// Collect Proxmox clusters that have our volumes
+	result.Clusters = c.collectProxmoxClusters(ctx, regionsNeeded, usedRegions)
 
 	return result
 }
@@ -481,11 +491,16 @@ func (c *Collector) getRegionsFromVolumes(pvs []KubernetesPersistentVolume) map[
 	return regionsNeeded
 }
 
-// collectProxmoxClusters gathers Proxmox clusters from the pool
-func (c *Collector) collectProxmoxClusters(ctx context.Context, regionsNeeded map[string]map[string]bool) []ProxmoxCluster {
+// collectProxmoxClusters gathers Proxmox clusters from the pool that have our volumes
+func (c *Collector) collectProxmoxClusters(ctx context.Context, regionsNeeded map[string]map[string]bool, usedRegions map[string]bool) []ProxmoxCluster {
 	var result []ProxmoxCluster
 
 	for region := range regionsNeeded {
+		// Only include clusters that have our volumes
+		if !usedRegions[region] {
+			continue
+		}
+
 		px, err := c.proxmox.GetProxmoxCluster(region)
 		if err != nil {
 			klog.ErrorS(err, "failed to get proxmox cluster", "region", region)
@@ -507,8 +522,8 @@ func (c *Collector) collectProxmoxClusters(ctx context.Context, regionsNeeded ma
 	return result
 }
 
-// collectProxmoxResources gathers Proxmox hosts, VMs and disks
-func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes, regionsNeeded map[string]map[string]bool, storageMeta map[string]map[string]proxmoxStorageMeta) (
+// collectProxmoxResources gathers Proxmox hosts, VMs and disks that are used by our plugin
+func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes, regionsNeeded map[string]map[string]bool, storageMeta map[string]map[string]proxmoxStorageMeta, usedNodes map[string]bool, usedVMs map[string]bool) (
 	[]ProxmoxNode, []ProxmoxVM, []ProxmoxSharedDisk, []ProxmoxLocalDisk) {
 
 	var nodes []ProxmoxNode
@@ -570,7 +585,7 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 	// to avoid duplicate API calls to list cluster resources.
 	diskUsage := c.analyzeDiskUsage(ctx, k8s.PersistentVolumes, regionsNeeded, storageMeta, resourcesByRegion, pxClientMap)
 
-	// Analyze disks from volumes
+	// Analyze disks from volumes and track which VMs/nodes are used
 	for _, pv := range k8s.PersistentVolumes {
 		if pv.VolumeReference == nil {
 			continue
@@ -603,6 +618,16 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 			} else if len(meta.Nodes) > 0 {
 				volumeRef.Node = meta.Nodes[0]
 			}
+		}
+
+		// Track used VMs and nodes
+		for _, vmID := range usage.AttachedVMIDs {
+			usedVMs[region+"/"+vmID] = true
+		}
+		if usage.AttachedNode != "" {
+			usedNodes[usage.AttachedNode] = true
+		} else if len(meta.Nodes) > 0 {
+			usedNodes[meta.Nodes[0]] = true
 		}
 
 		// Determine if it's a shared disk using cluster storage metadata.
@@ -651,6 +676,10 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		}
 	}
 
+	// Filter nodes and VMs to only include those that are used
+	nodes = filterUsedProxmoxNodes(nodes, usedNodes)
+	vms = filterUsedProxmoxVMs(vms, usedVMs)
+
 	return nodes, vms, sharedDisks, localDisks
 }
 
@@ -693,6 +722,38 @@ func proxmoxVMFromResource(region string, resource *proxmox.ClusterResource) Pro
 		Type:        resource.Type,
 		Status:      resource.Status,
 	}
+}
+
+// filterUsedProxmoxNodes returns only nodes that are in the usedNodes set
+func filterUsedProxmoxNodes(nodes []ProxmoxNode, usedNodes map[string]bool) []ProxmoxNode {
+	if len(usedNodes) == 0 {
+		return nil
+	}
+
+	var result []ProxmoxNode
+	for _, node := range nodes {
+		if usedNodes[node.Name] {
+			result = append(result, node)
+		}
+	}
+	return result
+}
+
+// filterUsedProxmoxVMs returns only VMs that are in the usedVMs set
+// usedVMs format: "region/vmid"
+func filterUsedProxmoxVMs(vms []ProxmoxVM, usedVMs map[string]bool) []ProxmoxVM {
+	if len(usedVMs) == 0 {
+		return nil
+	}
+
+	var result []ProxmoxVM
+	for _, vm := range vms {
+		key := vm.ClusterName + "/" + vm.ID
+		if usedVMs[key] {
+			result = append(result, vm)
+		}
+	}
+	return result
 }
 
 // analyzeDiskUsage maps disks to the actual Proxmox VM IDs that have them attached.
