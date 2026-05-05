@@ -180,8 +180,12 @@ func (c *Collector) collectStorageClasses(ctx context.Context, usedStorageClasse
 
 	var result []KubernetesStorageClass
 	for _, sc := range scs.Items {
-		// Only include storage classes that are used by our PVCs or are our CSI driver
-		if !(usedStorageClasses == nil || usedStorageClasses[sc.Name]) && sc.Provisioner != csi.DriverName {
+		// Only include storage classes that are our CSI driver
+		if sc.Provisioner != csi.DriverName {
+			continue
+		}
+		// Only include storage classes that are used by our PVCs (if usedStorageClasses is not nil)
+		if usedStorageClasses != nil && !usedStorageClasses[sc.Name] {
 			continue
 		}
 
