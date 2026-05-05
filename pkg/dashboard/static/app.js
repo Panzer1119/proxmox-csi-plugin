@@ -583,6 +583,7 @@ function buildMermaid(data, iconLoaded) {
     const {items, edges} = collectSnapshotModel(data);
     const visible = visibleItems(items, query);
     const byKey = new Map(items.map(item => [item.key, item]));
+    const groupKeys = new Set(items.filter(item => item.type === 'group').map(item => item.key));
     const childrenByParent = new Map();
     for (const item of items) {
         if (!item.parentKey) {
@@ -597,27 +598,88 @@ function buildMermaid(data, iconLoaded) {
         children.sort((a, b) => a.type.localeCompare(b.type) || a.label.localeCompare(b.label));
     }
 
+    const indent = '    ';
     const lines = ['architecture-beta'];
     const emitted = new Set();
 
-    function emit(key) {
+    function emitLine(line) {
+        lines.push(`${indent}${line}`);
+    }
+
+    function resolveParentGroup(item) {
+        if (!item.parentKey || !visible.has(item.parentKey) || !groupKeys.has(item.parentKey)) {
+            return '';
+        }
+        const parent = byKey.get(item.parentKey);
+        if (!parent || parent.type !== 'group') {
+            return '';
+        }
+        return ` in ${parent.mermaid}`;
+    }
+
+    function emitGroup(key) {
         const item = byKey.get(key);
-        if (!item || !visible.has(key) || emitted.has(key)) {
+        if (!item || item.type !== 'group' || !visible.has(key) || emitted.has(key)) {
             return;
         }
         emitted.add(key);
         const icon = iconFor(item.kind, iconLoaded);
-        const parent = item.parentKey && visible.has(item.parentKey) ? ` in ${byKey.get(item.parentKey).mermaid}` : '';
-        const line = `${item.type} ${item.mermaid}(${icon})["${esc(item.label)}"]${parent}`;
-        lines.push(line);
+        emitLine(`${item.type} ${item.mermaid}(${icon})["${esc(item.label)}"]${resolveParentGroup(item)}`);
         for (const child of childrenByParent.get(key) || []) {
-            emit(child.key);
+            if (child.type === 'group') {
+                emitGroup(child.key);
+            }
         }
     }
 
     const roots = items.filter(item => !item.parentKey).sort((a, b) => a.type.localeCompare(b.type) || a.label.localeCompare(b.label));
     for (const root of roots) {
-        emit(root.key);
+        if (root.type === 'group') {
+            emitGroup(root.key);
+        }
+    }
+
+    for (const item of items) {
+        if (!visible.has(item.key) || emitted.has(item.key) || item.type !== 'group') {
+            continue;
+        }
+        emitGroup(item.key);
+    }
+
+    function emitService(key) {
+        const item = byKey.get(key);
+        if (!item || item.type !== 'service' || !visible.has(key) || emitted.has(key)) {
+            return;
+        }
+        emitted.add(key);
+        const icon = iconFor(item.kind, iconLoaded);
+        emitLine(`${item.type} ${item.mermaid}(${icon})["${esc(item.label)}"]${resolveParentGroup(item)}`);
+    }
+
+    function emitServicesUnder(key) {
+        for (const child of childrenByParent.get(key) || []) {
+            if (child.type === 'service') {
+                emitService(child.key);
+            }
+        }
+        for (const child of childrenByParent.get(key) || []) {
+            if (child.type === 'group') {
+                emitServicesUnder(child.key);
+            }
+        }
+    }
+
+    for (const root of roots) {
+        if (root.type === 'group') {
+            emitServicesUnder(root.key);
+        }
+    }
+
+    for (const item of items) {
+        if (!visible.has(item.key) || emitted.has(item.key) || item.type !== 'service') {
+            continue;
+        }
+        emitService(item.key);
     }
 
     const visibleEdges = edges
