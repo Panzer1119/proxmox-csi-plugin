@@ -8,6 +8,7 @@ const copyFallbackBtn = document.getElementById('copyFallback');
 const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('summary');
 const generatedAtEl = document.getElementById('generatedAt');
+const hideNamespacesEl = document.getElementById('hideNamespaces');
 const hideUnusedPVsEl = document.getElementById('hideUnusedPVs');
 const hideUnusedPVCsEl = document.getElementById('hideUnusedPVCs');
 const hideUnusedDisksEl = document.getElementById('hideUnusedDisks');
@@ -184,15 +185,17 @@ function collectSnapshotModel(data, options = {}) {
         badgeText: '',
         searchText: 'kubernetes'
     });
-    addGroup({
-        key: namespacesRootKey,
-        prefix: 'namespaces',
-        kind: 'namespaces',
-        label: bold('Namespaces'),
-        badgeText: '',
-        parentKey: rootKey,
-        searchText: 'namespaces'
-    });
+    if (!options.hideNamespaces) {
+        addGroup({
+            key: namespacesRootKey,
+            prefix: 'namespaces',
+            kind: 'namespaces',
+            label: bold('Namespaces'),
+            badgeText: '',
+            parentKey: rootKey,
+            searchText: 'namespaces'
+        });
+    }
     addGroup({
         key: storageClassesRootKey,
         prefix: 'storageclasses',
@@ -213,7 +216,7 @@ function collectSnapshotModel(data, options = {}) {
     });
 
     const k8s = data?.kubernetes || {};
-    const namespaces = [...(k8s.namespaces || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const namespaces = options.hideNamespaces ? [] : [...(k8s.namespaces || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     const storageClasses = [...(k8s.storageClasses || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     const pvcs = [...(k8s.persistentVolumeClaims || [])].sort((a, b) => (a.namespace || '').localeCompare(b.namespace || '') || (a.name || '').localeCompare(b.name || ''));
     const pvs = [...(k8s.persistentVolumes || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -499,21 +502,46 @@ function collectSnapshotModel(data, options = {}) {
         }
     }
 
+    const removedPVCKeys = new Set();
     for (const pv of pvs) {
         if (!pvKeyByName.has(pv.name) && options.hideUnusedPVs && options.hideUnusedPVCs && pv.claimReference) {
             //FIXME This seems to work only half way, it removes some pvcs that are actually bound and its pvs are mounted,
             // and it does not remove some pvcs that are actually unused
             const pvcKey = `pvc|${pv.claimReference.namespace}|${pv.claimReference.name}`;
-            // Remove pvc from pvcByKey
-            pvcByKey.delete(pvcKey)
-            // Remove pvc from index
-            index.delete(pvcKey)
-            // Remove pvc from pvcKeyByNsName
-            pvcKeyByNsName.delete(`${pv.claimReference.namespace}/${pv.claimReference.name}`);
-            const node = pvcByKey.get(pvcKey);
-            if (node) {
-                // Remove node from items
-                items.splice(items.indexOf(node), 1);
+            if (!removedPVCKeys.has(pvcKey)) {
+                removedPVCKeys.add(pvcKey);
+                if (index.has(pvcKey)) {
+                    // Remove pvc from index
+                    index.delete(pvcKey);
+                } else {
+                    console.warn(`Unable to find index entry for PVC ${pvcKey} to remove it`);
+                }
+                const pvcKey2 = `${pv.claimReference.namespace}/${pv.claimReference.name}`;
+                if (pvcKeyByNsName.has(pvcKey2)) {
+                    // Remove pvc from pvcKeyByNsName
+                    pvcKeyByNsName.delete(pvcKey2);
+                } else {
+                    console.warn(`Unable to find pvcKeyByNsName entry for PVC ${pvcKey2} to remove it`);
+                }
+                if (pvcByKey.has(pvcKey)) {
+                    // Remove pvc from pvcByKey
+                    pvcByKey.delete(pvcKey);
+                } else {
+                    console.warn(`Unable to find pvcByKey entry for PVC ${pvcKey} to remove it`);
+                }
+                let found = false;
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].key === pvcKey) {
+                        items.splice(i, 1);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    console.warn(`Unable to find item entry for PVC ${pvcKey} to remove it`);
+                }
+            } else {
+                console.debug(`PVC ${pvcKey} already removed, skipping removal for PV ${pv.name}`);
             }
         }
         if (pvKeyByName.has(pv.name) || options.hideUnusedPVs) {
@@ -802,6 +830,7 @@ function updateSidebar(data, options = {}) {
 
 function getOptions() {
     return {
+        hideNamespaces: Boolean(hideNamespacesEl?.checked),
         hideUnusedPVs: Boolean(hideUnusedPVsEl?.checked),
         hideUnusedPVCs: Boolean(hideUnusedPVCsEl?.checked),
         hideUnusedDisks: Boolean(hideUnusedDisksEl?.checked)
@@ -878,6 +907,10 @@ if (copyFallbackBtn) {
 
 if (filterEl) {
     filterEl.oninput = () => render();
+}
+
+if (hideNamespacesEl) {
+    hideNamespacesEl.onchange = () => render();
 }
 
 if (hideUnusedPVsEl) {
