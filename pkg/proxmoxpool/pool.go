@@ -266,11 +266,13 @@ func (c *ProxmoxPool) FindVMByUUID(ctx context.Context, uuid string) (vmID int, 
 	return 0, "", ErrInstanceNotFound
 }
 
+type VMAndConfig struct {
+	RS *proxmox.ClusterResource
+	VM *proxmox.VirtualMachine
+}
+
 // FindVMsByUUIDs find VMs by UUIDs in all Proxmox clusters.
-func (c *ProxmoxPool) FindVMsByUUIDs(ctx context.Context, uuids []string) (map[string][]struct {
-	rs *proxmox.ClusterResource
-	vm *proxmox.VirtualMachine
-}, error) {
+func (c *ProxmoxPool) FindVMsByUUIDs(ctx context.Context, uuids []string) (map[string][]VMAndConfig, error) {
 	// quick guard
 	if c == nil || len(c.clients) == 0 {
 		return nil, ErrClustersNotFound
@@ -289,20 +291,14 @@ func (c *ProxmoxPool) FindVMsByUUIDs(ctx context.Context, uuids []string) (map[s
 
 	remaining := len(uuidSet)
 
-	vmsByRegion := make(map[string][]struct {
-		rs *proxmox.ClusterResource
-		vm *proxmox.VirtualMachine
-	}, len(c.clients))
+	vmsByRegion := make(map[string][]VMAndConfig, len(c.clients))
 
 	for region, px := range c.clients {
 		if remaining == 0 {
 			break // found all
 		}
 
-		vms := make([]struct {
-			rs *proxmox.ClusterResource
-			vm *proxmox.VirtualMachine
-		}, 0, len(uuidSet))
+		vms := make([]VMAndConfig, 0, len(uuidSet))
 
 		_, err := px.GetVMsByFilter(ctx, func(rs *proxmox.ClusterResource) (bool, error) {
 			if rs.Type != "qemu" {
@@ -320,12 +316,9 @@ func (c *ProxmoxPool) FindVMsByUUIDs(ctx context.Context, uuids []string) (map[s
 			}
 
 			if _, ok := uuidSet[u]; ok {
-				vms = append(vms, struct {
-					rs *proxmox.ClusterResource
-					vm *proxmox.VirtualMachine
-				}{
-					rs: rs,
-					vm: vm,
+				vms = append(vms, VMAndConfig{
+					RS: rs,
+					VM: vm,
 				})
 				// mark found and remove from set so we can early-exit properly
 				delete(uuidSet, u)
