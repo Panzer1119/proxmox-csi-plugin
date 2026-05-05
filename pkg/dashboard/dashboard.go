@@ -106,9 +106,14 @@ func (s *Server) runCollector(ctx context.Context, collector *Collector) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = collector.Collect(ctx, s.store)
+			s.collect(collector, ctx, "interval")
 		}
 	}
+}
+
+func (s *Server) collect(collector *Collector, ctx context.Context, reason string) {
+	klog.V(4).InfoS("Dashboard collector running", "reason", reason)
+	_ = collector.Collect(ctx, s.store)
 }
 
 func (s *Server) ensureCollectorRunning() {
@@ -119,7 +124,7 @@ func (s *Server) ensureCollectorRunning() {
 	}
 	s.collectorRunning = true
 	collector := &Collector{kube: s.kube, proxmox: s.proxmox}
-	_ = collector.Collect(s.collectorCtx, s.store)
+	s.collect(collector, s.collectorCtx, "initial")
 	go s.monitorCollector(collector)
 }
 
