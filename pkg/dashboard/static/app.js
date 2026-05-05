@@ -394,12 +394,12 @@ function collectSnapshotModel(data) {
                             }
                             const pvKey = pvKeyByName.get(pvName);
                             if (pvKey) {
-                                edges.push({from: podKey, to: pvKey, kind: 'uses', label: volumeName});
+                                edges.push({from: pvKey, to: podKey, kind: 'uses', label: "used as " + volumeName, animate: true});
                             }
                         }
                     }
 
-                    edges.push({from: vmKey, to: nodeKey, kind: 'hosts', label: ''});
+                    edges.push({from: vmKey, to: nodeKey, kind: 'hosts', label: '', animate: false});
                 }
             }
         }
@@ -436,7 +436,7 @@ function collectSnapshotModel(data) {
                 for (const vmId of disk.attachedVMIds || []) {
                     const vmKey = vmKeyByRegionZoneId.get(`${regionName}|${zoneName}|${vmId}`) || [...vmKeyByRegionZoneId.entries()].find(([key]) => key.endsWith(`|${vmId}`))?.[1];
                     if (vmKey) {
-                        edges.push({from: diskKey, to: vmKey, kind: 'attached', label: ''});
+                        edges.push({from: diskKey, to: vmKey, kind: 'attached', label: '', animate: true});
                     }
                 }
             }
@@ -449,7 +449,7 @@ function collectSnapshotModel(data) {
             for (const vmId of disk.attachedVMIds || []) {
                 const vmKey = [...vmKeyByRegionZoneId.entries()].find(([key]) => key.endsWith(`|${vmId}`))?.[1];
                 if (vmKey) {
-                    edges.push({from: diskKey, to: vmKey, kind: 'attached', label: ''});
+                    edges.push({from: diskKey, to: vmKey, kind: 'attached', label: '', animate: true});
                 }
             }
         }
@@ -462,12 +462,12 @@ function collectSnapshotModel(data) {
         }
         const scKey = scKeyByName.get(pvc.storageClassName);
         if (scKey) {
-            edges.push({from: pvcKey, to: scKey, kind: 'provisioned-by', label: ''});
+            edges.push({from: pvcKey, to: scKey, kind: 'provisioned-by', label: '', animate: false});
         }
         if (pvc.volumeName) {
             const pvKey = pvKeyByName.get(pvc.volumeName);
             if (pvKey) {
-                edges.push({from: pvcKey, to: pvKey, kind: 'bound-to', label: ''});
+                edges.push({from: pvcKey, to: pvKey, kind: 'bound-to', label: '', animate: pvc.bound});
             }
         }
     }
@@ -481,7 +481,7 @@ function collectSnapshotModel(data) {
         if (ref) {
             const refKey = diskKeyByExact.get(`${ref.region}|${ref.zone || ''}|${ref.storage}|${ref.disk}`) || diskKeyByExact.get(`${ref.region}||${ref.storage}|${ref.disk}`);
             if (refKey) {
-                edges.push({from: pvKey, to: refKey, kind: 'backed-by', label: ''});
+                edges.push({from: pvKey, to: refKey, kind: 'backed-by', label: '', animate: pv.bound});
             }
         }
     }
@@ -708,8 +708,7 @@ function buildMermaid(data) {
         }
     }
 
-    function addEdge(fromKey, toKey, kind, label) {
-        void label;
+    function addEdge(fromKey, toKey, label, animate) {
         if (!visible.has(fromKey) || !visible.has(toKey)) {
             return;
         }
@@ -719,9 +718,11 @@ function buildMermaid(data) {
             return;
         }
         const edgeId = `e${edgeSeq += 1}`;
-        const animate = kind === 'backed-by';
         const operator = animate ? '==>' : '-->';
-        emitLine(`${from.mermaid} ${edgeId}@${operator} ${to.mermaid}`);
+        if (label) {
+            label = `|${esc(label)}|`;
+        }
+        emitLine(`${from.mermaid} ${edgeId}@${operator}${label} ${to.mermaid}`);
         if (animate) {
             emitLine(`${edgeId}@{ animate: true }`);
         }
@@ -737,7 +738,7 @@ function buildMermaid(data) {
             continue;
         }
         seen.add(key);
-        addEdge(edge.from, edge.to, edge.kind, edge.label);
+        addEdge(edge.from, edge.to, edge.label || edge.kind, edge.animate);
     }
 
 
