@@ -90,10 +90,6 @@ function formatDiskName(disk) {
     return parts.join(' · ');
 }
 
-function formatVmName(vm) {
-    return label(vm.name || vm.id || 'vm', vm.id ? `#${vm.id}` : '');
-}
-
 function formatNodeName(node) {
     return label(node.name || 'node', node.labels?.['kubernetes.io/hostname'] || '');
 }
@@ -160,33 +156,62 @@ function collectSnapshotModel(data) {
         attachedDisks: 0
     };
 
-    const regions = Object.entries(data?.regions || {}).sort(([a], [b]) => a.localeCompare(b));
-    const proxmoxRootKey = 'root|proxmox';
-    createItem(items, index, {
-        key: proxmoxRootKey,
-        prefix: 'root',
-        kind: 'proxmox-root',
-        type: 'group',
-        label: 'Proxmox cluster',
-        badgeText: '',
-        searchText: 'proxmox cluster'
-    });
-    const kubernetesRootKey = 'root|kubernetes';
-    createItem(items, index, {
-        key: kubernetesRootKey,
+    const edgeSet = new Set();
+    const addEdge = (from, to, kind, label, animate) => {
+        if (!from || !to) {
+            return;
+        }
+        const dedupe = `${from}|${to}|${kind}|${label}|${animate}`;
+        if (edgeSet.has(dedupe)) {
+            return;
+        }
+        edgeSet.add(dedupe);
+        edges.push({from, to, kind, label, animate});
+    };
+
+    const addGroup = item => createItem(items, index, {...item, type: 'group'});
+    const addService = item => createItem(items, index, {...item, type: 'service'});
+
+    const rootKey = 'root|kubernetes';
+    const namespacesRootKey = 'root|kubernetes|namespaces';
+    const storageClassesRootKey = 'root|kubernetes|storageclasses';
+    const regionsRootKey = 'root|kubernetes|regions';
+
+    addGroup({
+        key: rootKey,
         prefix: 'root',
         kind: 'kubernetes-root',
-        type: 'group',
-        label: 'Kubernetes resources',
+        label: 'Kubernetes',
         badgeText: '',
-        searchText: 'kubernetes resources'
+        searchText: 'kubernetes'
     });
-
-    const vmKeyByRegionZoneId = new Map();
-    const pvcKeyByNsName = new Map();
-    const pvKeyByName = new Map();
-    const scKeyByName = new Map();
-    const diskKeyByExact = new Map();
+    addGroup({
+        key: namespacesRootKey,
+        prefix: 'namespaces',
+        kind: 'namespaces',
+        label: 'Namespaces',
+        badgeText: '',
+        parentKey: rootKey,
+        searchText: 'namespaces'
+    });
+    addGroup({
+        key: storageClassesRootKey,
+        prefix: 'storageclasses',
+        kind: 'storageclasses',
+        label: 'StorageClasses',
+        badgeText: '',
+        parentKey: rootKey,
+        searchText: 'storageclasses'
+    });
+    addGroup({
+        key: regionsRootKey,
+        prefix: 'regions',
+        kind: 'regions',
+        label: 'Regions',
+        badgeText: '',
+        parentKey: rootKey,
+        searchText: 'regions'
+    });
 
     const k8s = data?.kubernetes || {};
     const namespaces = [...(k8s.namespaces || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -194,45 +219,30 @@ function collectSnapshotModel(data) {
     const pvcs = [...(k8s.persistentVolumeClaims || [])].sort((a, b) => (a.namespace || '').localeCompare(b.namespace || '') || (a.name || '').localeCompare(b.name || ''));
     const pvs = [...(k8s.persistentVolumes || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-    const storageRootKey = 'root|kubernetes|storage';
-    createItem(items, index, {
-        key: storageRootKey,
-        prefix: 'storage',
-        kind: 'storage',
-        type: 'group',
-        label: 'Storage inventory',
-        badgeText: '',
-        parentKey: kubernetesRootKey,
-        searchText: 'storage inventory'
-    });
+    const namespaceKeyByName = new Map();
+    const storageClassKeyByName = new Map();
+    const pvcKeyByNsName = new Map();
+    const pvByName = new Map();
+    const pvKeyByName = new Map();
+    const podKeyByPVName = new Map();
+    const diskKeyByExact = new Map();
+    const orphanPvGroupByZone = new Map();
 
-    const namespaceRootKey = 'root|kubernetes|namespaces';
-    createItem(items, index, {
-        key: namespaceRootKey,
-        prefix: 'namespace-root',
-        kind: 'namespace',
-        type: 'group',
-        label: 'Namespaces',
-        badgeText: '',
-        parentKey: kubernetesRootKey,
-        searchText: 'namespaces'
-    });
-
-    for (const namespace of namespaces) {
+    for (const ns of namespaces) {
         stats.namespaces += 1;
-        if (namespace.isPrivileged) {
+        if (ns.isPrivileged) {
             stats.privilegedNamespaces += 1;
         }
-        const nsKey = `namespace|${namespace.name}`;
-        createItem(items, index, {
-            key: nsKey,
+        const key = `namespace|${ns.name}`;
+        namespaceKeyByName.set(ns.name, key);
+        addService({
+            key,
             prefix: 'namespace',
             kind: 'namespace',
-            type: 'group',
-            label: formatNamespaceName(namespace),
-            badgeText: namespace.isPrivileged ? 'privileged' : '',
-            parentKey: namespaceRootKey,
-            searchText: [namespace.name, namespace.kind, namespace.namespace, namespace.isPrivileged ? 'privileged' : '', namespace.annotations ? Object.keys(namespace.annotations).join(' ') : '', namespace.labels ? Object.keys(namespace.labels).join(' ') : ''].filter(Boolean).join(' ')
+            label: formatNamespaceName(ns),
+            badgeText: ns.isPrivileged ? 'privileged' : '',
+            parentKey: namespacesRootKey,
+            searchText: [ns.name, ns.isPrivileged ? 'privileged' : '', ns.kind || ''].filter(Boolean).join(' ')
         });
     }
 
@@ -242,87 +252,160 @@ function collectSnapshotModel(data) {
             stats.defaultStorageClasses += 1;
         }
         const scKey = `storageclass|${sc.name}`;
-        scKeyByName.set(sc.name, scKey);
-        createItem(items, index, {
+        storageClassKeyByName.set(sc.name, scKey);
+        addGroup({
             key: scKey,
             prefix: 'storageclass',
             kind: 'storageclass',
-            type: 'service',
             label: formatStorageClassName(sc),
             badgeText: sc.isDefault ? 'default' : '',
-            parentKey: storageRootKey,
-            searchText: [sc.name, sc.provisioner, sc.reclaimPolicy, sc.volumeBindingMode, sc.isDefault ? 'default' : '', sc.allowVolumeExpansion ? 'expandable' : ''].filter(Boolean).join(' ')
+            parentKey: storageClassesRootKey,
+            searchText: [sc.name, sc.provisioner, sc.isDefault ? 'default' : ''].filter(Boolean).join(' ')
         });
     }
 
-    for (const pv of pvs) {
-        stats.pvs += 1;
-        if (pv.bound) {
-            stats.boundPvs += 1;
-        }
-        const pvKey = `pv|${pv.name}`;
-        pvKeyByName.set(pv.name, pvKey);
-        createItem(items, index, {
-            key: pvKey,
-            prefix: 'pv',
-            kind: 'pv',
-            type: 'service',
-            label: formatPvName(pv),
-            badgeText: pv.status?.phase || '',
-            parentKey: storageRootKey,
-            searchText: [pv.name, pv.storageClassName, pv.capacity, pv.mode, pv.status?.phase || '', pv.bound ? 'bound' : 'unbound', pv.volumeHandle, pv.volumeReference ? [pv.volumeReference.region, pv.volumeReference.zone, pv.volumeReference.node, pv.volumeReference.storage, pv.volumeReference.disk].filter(Boolean).join(' ') : '', pv.claimReference ? [pv.claimReference.namespace, pv.claimReference.name].filter(Boolean).join(' ') : ''].filter(Boolean).join(' ')
-        });
-    }
-
+    const unclassifiedStorageClassKey = 'storageclass|_unclassified';
+    let hasUnclassifiedPVC = false;
     for (const pvc of pvcs) {
         stats.pvcs += 1;
         if (pvc.bound) {
             stats.boundPvcs += 1;
         }
-        const nsKey = `namespace|${pvc.namespace}`;
-        const pvcKey = `pvc|${pvc.namespace}|${pvc.name}`;
-        pvcKeyByNsName.set(`${pvc.namespace}/${pvc.name}`, pvcKey);
-        createItem(items, index, {
-            key: pvcKey,
+        const parentSC = storageClassKeyByName.get(pvc.storageClassName) || unclassifiedStorageClassKey;
+        if (parentSC === unclassifiedStorageClassKey) {
+            hasUnclassifiedPVC = true;
+        }
+        const key = `pvc|${pvc.namespace}|${pvc.name}`;
+        pvcKeyByNsName.set(`${pvc.namespace}/${pvc.name}`, key);
+        addService({
+            key,
             prefix: 'pvc',
             kind: 'pvc',
-            type: 'service',
             label: formatPvcName(pvc),
             badgeText: pvc.bound ? 'bound' : 'pending',
-            parentKey: nsKey,
-            searchText: [pvc.namespace, pvc.name, pvc.storageClassName, pvc.bound ? 'bound' : 'pending', pvc.capacityRequest, pvc.volumeMode, pvc.volumeName, ...(pvc.accessMode || [])].filter(Boolean).join(' ')
+            parentKey: parentSC,
+            searchText: [pvc.namespace, pvc.name, pvc.storageClassName, pvc.bound ? 'bound' : 'pending', pvc.volumeName || ''].filter(Boolean).join(' ')
+        });
+    }
+    if (hasUnclassifiedPVC) {
+        addGroup({
+            key: unclassifiedStorageClassKey,
+            prefix: 'storageclass',
+            kind: 'storageclass',
+            label: 'StorageClass: <none>',
+            badgeText: '',
+            parentKey: storageClassesRootKey,
+            searchText: 'storageclass none'
         });
     }
 
-    for (const region of regions) {
-        const [regionName, regionValue] = region;
+    for (const pv of pvs) {
+        pvByName.set(pv.name, pv);
+        stats.pvs += 1;
+        if (pv.bound) {
+            stats.boundPvs += 1;
+        }
+    }
+
+    const ensurePVNode = (pvName, parentKey) => {
+        if (pvKeyByName.has(pvName)) {
+            return pvKeyByName.get(pvName);
+        }
+        const pv = pvByName.get(pvName);
+        if (!pv) {
+            return null;
+        }
+        const key = `pv|${pvName}`;
+        pvKeyByName.set(pvName, key);
+        addService({
+            key,
+            prefix: 'pv',
+            kind: 'pv',
+            label: formatPvName(pv),
+            badgeText: pv.bound ? 'bound' : 'unbound',
+            parentKey,
+            searchText: [pv.name, pv.bound ? 'bound' : 'unbound', pv.storageClassName || '', pv.volumeHandle || ''].filter(Boolean).join(' ')
+        });
+        return key;
+    };
+
+    const regions = Object.entries(data?.regions || {}).sort(([a], [b]) => a.localeCompare(b));
+    const nodeGroupKeys = new Set();
+    for (const [regionName, regionValue] of regions) {
         stats.regions += 1;
         const regionKey = `region|${regionName}`;
-        createItem(items, index, {
+        const sharedDisksKey = `region|${regionName}|shared-disks`;
+
+        addGroup({
             key: regionKey,
             prefix: 'region',
             kind: 'region',
-            type: 'group',
             label: regionValue?.name || regionName,
             badgeText: '',
-            parentKey: proxmoxRootKey,
-            searchText: [regionName, regionValue?.name || '', regionValue?.zones ? Object.keys(regionValue.zones).join(' ') : '', regionValue?.disks ? regionValue.disks.map(formatDiskName).join(' ') : ''].filter(Boolean).join(' ')
+            parentKey: regionsRootKey,
+            searchText: [regionName, regionValue?.name || ''].filter(Boolean).join(' ')
+        });
+        addGroup({
+            key: sharedDisksKey,
+            prefix: 'shared-disks',
+            kind: 'shared-disks',
+            label: 'SharedDisks',
+            badgeText: '',
+            parentKey: regionKey,
+            searchText: 'shared disks'
         });
 
+        for (const disk of regionValue?.disks || []) {
+            stats.disks += 1;
+            if (disk.attachedVMIds?.length) {
+                stats.attachedDisks += 1;
+            }
+            const diskKey = `disk|shared|${regionName}|${disk.storageId}|${disk.name}`;
+            diskKeyByExact.set(`${regionName}||${disk.storageId}|${disk.name}`, diskKey);
+            addService({
+                key: diskKey,
+                prefix: 'disk-shared',
+                kind: 'disk',
+                label: formatDiskName(disk),
+                badgeText: 'shared',
+                parentKey: sharedDisksKey,
+                searchText: [regionName, disk.storageId, disk.name].filter(Boolean).join(' ')
+            });
+        }
+
         const zones = Object.entries(regionValue?.zones || {}).sort(([a], [b]) => a.localeCompare(b));
-        for (const zone of zones) {
-            const [zoneName, zoneValue] = zone;
+        for (const [zoneName, zoneValue] of zones) {
             stats.zones += 1;
             const zoneKey = `zone|${regionName}|${zoneName}`;
-            createItem(items, index, {
+            const localDisksKey = `zone|${regionName}|${zoneName}|local-disks`;
+            const nodesRootKey = `zone|${regionName}|${zoneName}|nodes`;
+
+            addGroup({
                 key: zoneKey,
                 prefix: 'zone',
                 kind: 'zone',
-                type: 'group',
                 label: zoneValue?.name || zoneName,
                 badgeText: '',
                 parentKey: regionKey,
-                searchText: [regionName, zoneName, zoneValue?.name || '', zoneValue?.vms ? zoneValue.vms.map(formatVmName).join(' ') : '', zoneValue?.disks ? zoneValue.disks.map(formatDiskName).join(' ') : ''].filter(Boolean).join(' ')
+                searchText: [regionName, zoneName, zoneValue?.name || ''].filter(Boolean).join(' ')
+            });
+            addGroup({
+                key: localDisksKey,
+                prefix: 'local-disks',
+                kind: 'local-disks',
+                label: 'LocalDisks',
+                badgeText: '',
+                parentKey: zoneKey,
+                searchText: 'local disks'
+            });
+            addGroup({
+                key: nodesRootKey,
+                prefix: 'nodes',
+                kind: 'nodes',
+                label: 'Nodes',
+                badgeText: '',
+                parentKey: zoneKey,
+                searchText: 'nodes'
             });
 
             for (const disk of zoneValue?.disks || []) {
@@ -332,127 +415,96 @@ function collectSnapshotModel(data) {
                 }
                 const diskKey = `disk|local|${regionName}|${zoneName}|${disk.storageId}|${disk.name}`;
                 diskKeyByExact.set(`${regionName}|${zoneName}|${disk.storageId}|${disk.name}`, diskKey);
-                createItem(items, index, {
+                addService({
                     key: diskKey,
-                    prefix: 'local-disk',
-                    kind: 'local-disk',
-                    type: 'service',
+                    prefix: 'disk-local',
+                    kind: 'disk',
                     label: formatDiskName(disk),
-                    badgeText: disk.attachedVMIds?.length ? `${disk.attachedVMIds.length} attached` : '',
-                    parentKey: zoneKey,
-                    searchText: [regionName, zoneName, disk.storageId, disk.name, disk.sizeBytes ? String(disk.sizeBytes) : '', ...(disk.attachedVMIds || [])].filter(Boolean).join(' ')
+                    badgeText: 'local',
+                    parentKey: localDisksKey,
+                    searchText: [regionName, zoneName, disk.storageId, disk.name].filter(Boolean).join(' ')
                 });
             }
 
-            for (const vm of zoneValue?.vms || []) {
+            const vms = [...(zoneValue?.vms || [])].sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
+            for (const vm of vms) {
                 stats.vms += 1;
-                const vmKey = `vm|${regionName}|${zoneName}|${vm.id}`;
-                vmKeyByRegionZoneId.set(`${regionName}|${zoneName}|${vm.id}`, vmKey);
-                createItem(items, index, {
-                    key: vmKey,
-                    prefix: 'qemu',
-                    kind: 'qemu',
-                    type: 'group',
-                    label: formatVmName(vm),
-                    badgeText: vm.node?.kind ? 'node attached' : 'unmapped',
-                    parentKey: zoneKey,
-                    searchText: [regionName, zoneName, vm.id, vm.name, vm.node?.name || '', vm.node?.kind || '', vm.node?.hostname || ''].filter(Boolean).join(' ')
-                });
-
                 const node = vm.node || {};
-                if (node.kind) {
+                if (!node.kind) {
+                    continue;
+                }
+                const nodeName = node.name || vm.name || String(vm.id || 'node');
+                const nodeGroupKey = `node|${regionName}|${zoneName}|${node.uid || nodeName}`;
+                if (!nodeGroupKeys.has(nodeGroupKey)) {
+                    nodeGroupKeys.add(nodeGroupKey);
                     stats.nodes += 1;
-                    const nodeKey = `node|${node.uid || node.name || vmKey}`;
-                    createItem(items, index, {
-                        key: nodeKey,
-                        prefix: 'k8s-node',
-                        kind: 'k8s-node',
-                        type: 'group',
+                    addGroup({
+                        key: nodeGroupKey,
+                        prefix: 'node',
+                        kind: 'node',
                         label: formatNodeName(node),
-                        badgeText: node.pods?.length ? `${node.pods.length} pod${node.pods.length === 1 ? '' : 's'}` : '',
-                        parentKey: vmKey,
-                        searchText: [node.kind, node.name, node.uid, node.namespace, node.createdAt, ...(node.labels ? Object.entries(node.labels).flat() : []), ...(node.annotations ? Object.entries(node.annotations).flat() : [])].filter(Boolean).join(' ')
+                        badgeText: '',
+                        parentKey: nodesRootKey,
+                        searchText: [nodeName, node.uid || '', regionName, zoneName].filter(Boolean).join(' ')
+                    });
+                }
+
+                const pods = [...(node.pods || [])].sort((a, b) => `${a.namespace || ''}/${a.name || ''}`.localeCompare(`${b.namespace || ''}/${b.name || ''}`));
+                for (const pod of pods) {
+                    stats.pods += 1;
+                    const podKey = `pod|${regionName}|${zoneName}|${node.uid || nodeName}|${pod.uid || `${pod.namespace}/${pod.name}`}`;
+                    addGroup({
+                        key: podKey,
+                        prefix: 'pod',
+                        kind: 'pod',
+                        label: formatPodName(pod),
+                        badgeText: '',
+                        parentKey: nodeGroupKey,
+                        searchText: [pod.namespace, pod.name, pod.uid || '', pod.hostname || ''].filter(Boolean).join(' ')
                     });
 
-                    for (const pod of node.pods || []) {
-                        stats.pods += 1;
-                        const podKey = `pod|${pod.namespace}|${pod.name}|${pod.uid}`;
-                        createItem(items, index, {
-                            key: podKey,
-                            prefix: 'pod',
-                            kind: 'pod',
-                            type: 'service',
-                            label: formatPodName(pod),
-                            badgeText: pod.hostname || '',
-                            parentKey: nodeKey,
-                            searchText: [pod.namespace, pod.name, pod.uid, pod.hostname, ...(pod.volumes ? Object.entries(pod.volumes).flat() : []), pod.kind || '', pod.createdAt || '', ...(pod.labels ? Object.entries(pod.labels).flat() : []), ...(pod.annotations ? Object.entries(pod.annotations).flat() : [])].filter(Boolean).join(' ')
-                        });
-
-                        for (const [volumeName, pvName] of Object.entries(pod.volumes || {})) {
-                            if (!pvName) {
-                                continue;
-                            }
-                            const pvKey = pvKeyByName.get(pvName);
-                            if (pvKey) {
-                                edges.push({from: pvKey, to: podKey, kind: 'uses', label: "used as " + volumeName, animate: true});
-                            }
+                    const volumeEntries = Object.entries(pod.volumes || {}).sort(([a], [b]) => a.localeCompare(b));
+                    for (const [, pvName] of volumeEntries) {
+                        if (!pvName) {
+                            continue;
                         }
+                        const pvKey = ensurePVNode(pvName, podKey);
+                        if (!pvKey) {
+                            continue;
+                        }
+                        if (!podKeyByPVName.has(pvName)) {
+                            podKeyByPVName.set(pvName, new Set());
+                        }
+                        podKeyByPVName.get(pvName).add(podKey);
                     }
-
-                    edges.push({from: vmKey, to: nodeKey, kind: 'hosts', label: '', animate: false});
                 }
             }
-        }
-
-        for (const disk of regionValue?.disks || []) {
-            stats.disks += 1;
-            if (disk.attachedVMIds?.length) {
-                stats.attachedDisks += 1;
-            }
-            const diskKey = `disk|shared|${regionName}|${disk.storageId}|${disk.name}`;
-            diskKeyByExact.set(`${regionName}||${disk.storageId}|${disk.name}`, diskKey);
-            createItem(items, index, {
-                key: diskKey,
-                prefix: 'shared-disk',
-                kind: 'shared-disk',
-                type: 'service',
-                label: formatDiskName(disk),
-                badgeText: disk.attachedVMIds?.length ? `${disk.attachedVMIds.length} attached` : '',
-                parentKey: regionKey,
-                searchText: [regionName, disk.storageId, disk.name, disk.sizeBytes ? String(disk.sizeBytes) : '', ...(disk.attachedVMIds || [])].filter(Boolean).join(' ')
-            });
         }
     }
 
-    for (const region of regions) {
-        const [regionName, regionValue] = region;
-        for (const zone of Object.entries(regionValue?.zones || {})) {
-            const [zoneName, zoneValue] = zone;
-            for (const disk of zoneValue?.disks || []) {
-                const diskKey = diskKeyByExact.get(`${regionName}|${zoneName}|${disk.storageId}|${disk.name}`);
-                if (!diskKey) {
-                    continue;
-                }
-                for (const vmId of disk.attachedVMIds || []) {
-                    const vmKey = vmKeyByRegionZoneId.get(`${regionName}|${zoneName}|${vmId}`) || [...vmKeyByRegionZoneId.entries()].find(([key]) => key.endsWith(`|${vmId}`))?.[1];
-                    if (vmKey) {
-                        edges.push({from: diskKey, to: vmKey, kind: 'attached', label: '', animate: true});
-                    }
-                }
-            }
+    for (const pv of pvs) {
+        if (pvKeyByName.has(pv.name)) {
+            continue;
         }
-        for (const disk of regionValue?.disks || []) {
-            const diskKey = diskKeyByExact.get(`${regionName}||${disk.storageId}|${disk.name}`);
-            if (!diskKey) {
-                continue;
+        const ref = pv.volumeReference;
+        let parentKey = regionsRootKey;
+        if (ref?.region && ref?.zone) {
+            const zoneOrphanKey = `zone|${ref.region}|${ref.zone}|orphan-pvs`;
+            if (!orphanPvGroupByZone.has(zoneOrphanKey)) {
+                orphanPvGroupByZone.set(zoneOrphanKey, true);
+                addGroup({
+                    key: zoneOrphanKey,
+                    prefix: 'orphan-pvs',
+                    kind: 'pvs',
+                    label: 'PVs',
+                    badgeText: '',
+                    parentKey: `zone|${ref.region}|${ref.zone}`,
+                    searchText: 'pvs'
+                });
             }
-            for (const vmId of disk.attachedVMIds || []) {
-                const vmKey = [...vmKeyByRegionZoneId.entries()].find(([key]) => key.endsWith(`|${vmId}`))?.[1];
-                if (vmKey) {
-                    edges.push({from: diskKey, to: vmKey, kind: 'attached', label: '', animate: true});
-                }
-            }
+            parentKey = zoneOrphanKey;
         }
+        ensurePVNode(pv.name, parentKey);
     }
 
     for (const pvc of pvcs) {
@@ -460,29 +512,38 @@ function collectSnapshotModel(data) {
         if (!pvcKey) {
             continue;
         }
-        const scKey = scKeyByName.get(pvc.storageClassName);
-        if (scKey) {
-            edges.push({from: pvcKey, to: scKey, kind: 'provisioned-by', label: '', animate: false});
+        const nsKey = namespaceKeyByName.get(pvc.namespace);
+        if (nsKey) {
+            addEdge(nsKey, pvcKey, 'namespace-pvc', 'contains', false);
         }
         if (pvc.volumeName) {
             const pvKey = pvKeyByName.get(pvc.volumeName);
             if (pvKey) {
-                edges.push({from: pvcKey, to: pvKey, kind: 'bound-to', label: '', animate: pvc.bound});
+                addEdge(pvcKey, pvKey, 'pvc-pv', 'binds', Boolean(pvc.bound));
             }
+        }
+    }
+
+    for (const [pvName, podKeys] of podKeyByPVName.entries()) {
+        const pvKey = pvKeyByName.get(pvName);
+        const pv = pvByName.get(pvName);
+        if (!pvKey || !pv) {
+            continue;
+        }
+        for (const podKey of podKeys) {
+            addEdge(pvKey, podKey, 'pv-pod', 'mounted', Boolean(pv.bound));
         }
     }
 
     for (const pv of pvs) {
         const pvKey = pvKeyByName.get(pv.name);
-        if (!pvKey) {
+        if (!pvKey || !pv.volumeReference) {
             continue;
         }
         const ref = pv.volumeReference;
-        if (ref) {
-            const refKey = diskKeyByExact.get(`${ref.region}|${ref.zone || ''}|${ref.storage}|${ref.disk}`) || diskKeyByExact.get(`${ref.region}||${ref.storage}|${ref.disk}`);
-            if (refKey) {
-                edges.push({from: pvKey, to: refKey, kind: 'backed-by', label: '', animate: pv.bound});
-            }
+        const diskKey = diskKeyByExact.get(`${ref.region}|${ref.zone || ''}|${ref.storage}|${ref.disk}`) || diskKeyByExact.get(`${ref.region}||${ref.storage}|${ref.disk}`);
+        if (diskKey) {
+            addEdge(diskKey, pvKey, 'disk-pv', 'backs', true);
         }
     }
 
@@ -540,7 +601,7 @@ function buildMermaid(data) {
     const {items, edges} = collectSnapshotModel(data);
     const visible = visibleItems(items, query);
     const byKey = new Map(items.map(item => [item.key, item]));
-    const groupKeys = new Set(items.filter(item => item.type === 'group').map(item => item.key));
+
     const childrenByParent = new Map();
     for (const item of items) {
         if (!item.parentKey) {
@@ -558,187 +619,116 @@ function buildMermaid(data) {
     const indent = '    ';
     const lines = ['flowchart LR'];
     const emitted = new Set();
+    const nodeClassRefs = [];
     let edgeSeq = 0;
 
     function emitLine(line, depth = 1) {
         lines.push(`${indent.repeat(depth)}${line}`);
     }
 
-    function isVisibleGroup(key) {
-        return visible.has(key) && groupKeys.has(key) && byKey.get(key)?.type === 'group';
+    function classForKind(kind) {
+        if (kind === 'namespace') return 'cNamespace';
+        if (kind === 'storageclass') return 'cStorageClass';
+        if (kind === 'pvc') return 'cPVC';
+        if (kind === 'pv') return 'cPV';
+        if (kind === 'pod') return 'cPod';
+        if (kind === 'node') return 'cNode';
+        if (kind === 'region') return 'cRegion';
+        if (kind === 'zone') return 'cZone';
+        if (kind === 'disk') return 'cDisk';
+        return 'cDefault';
     }
 
-    function getNodeShape(item) {
+    function nodeShape(item) {
         if (item.kind === 'pvc') {
             return `{{${esc(item.label)}}}`;
-        } else if (item.kind === 'pv') {
+        }
+        if (item.kind === 'pv') {
             return `[(${esc(item.label)})]`;
-        } else if (item.kind === 'local-disk' || item.kind === 'shared-disk') {
+        }
+        if (item.kind === 'disk') {
             return `[/${esc(item.label)}/]`;
         }
         return `["${esc(item.label)}"]`;
     }
 
-    function emitNode(item, depth) {
-        const shape = getNodeShape(item);
-        emitLine(`${item.mermaid}${shape}`, depth);
-    }
-
-    function emitService(key, depth) {
-        const item = byKey.get(key);
-        if (!item || item.type !== 'service' || !visible.has(key) || emitted.has(key)) {
-            return;
-        }
-        emitted.add(key);
-        emitNode(item, depth);
-    }
-
-    function emitVmNodeGroup(vmKey, nodeKey, depth) {
-        const vmItem = byKey.get(vmKey);
-        const nodeItem = byKey.get(nodeKey);
-        if (!vmItem || !nodeItem || emitted.has(vmKey) || emitted.has(nodeKey)) {
-            return;
-        }
-        emitted.add(vmKey);
-        emitted.add(nodeKey);
-        const label = nodeItem.label && vmItem.label ? `${vmItem.label} / ${nodeItem.label}` : (nodeItem.label || vmItem.label || 'VM/Node');
-        emitLine(`subgraph ${vmItem.mermaid}["${esc(label)}"]`, depth);
-        emitLine('direction TD', depth + 1);
-        const childrenOfNode = childrenByParent.get(nodeKey) || [];
-        for (const child of childrenOfNode) {
-            if (child.type === 'service') {
-                emitService(child.key, depth + 1);
-            }
-        }
-        emitLine('end', depth);
+    function emitServiceNode(item, depth) {
+        emitLine(`${item.mermaid}${nodeShape(item)}`, depth);
+        nodeClassRefs.push([item.mermaid, classForKind(item.kind)]);
     }
 
     function emitGroup(key, depth) {
         const item = byKey.get(key);
-        if (!item || item.type !== 'group' || !isVisibleGroup(key) || emitted.has(key)) {
+        if (!item || item.type !== 'group' || !visible.has(key) || emitted.has(key)) {
             return;
         }
         emitted.add(key);
-        const shouldCombineVmNode = item.kind === 'qemu';
-        if (shouldCombineVmNode) {
-            const nodeChildren = childrenByParent.get(key) || [];
-            const nodeChild = nodeChildren.find(c => c.kind === 'k8s-node');
-            if (nodeChild && visible.has(nodeChild.key) && !emitted.has(nodeChild.key)) {
-                emitVmNodeGroup(key, nodeChild.key, depth);
-                return;
-            }
-        }
+
         emitLine(`subgraph ${item.mermaid}["${esc(item.label)}"]`, depth);
-        emitLine('direction TD', depth + 1);
+        emitLine(depth === 1 ? 'direction LR' : 'direction TD', depth + 1);
+
         const children = childrenByParent.get(key) || [];
         for (const child of children) {
-            if (child.type === 'group' && child.kind !== 'k8s-node') {
+            if (child.type === 'group') {
                 emitGroup(child.key, depth + 1);
             }
         }
         for (const child of children) {
-            if (child.type === 'service') {
-                emitService(child.key, depth + 1);
+            if (child.type === 'service' && visible.has(child.key) && !emitted.has(child.key)) {
+                emitted.add(child.key);
+                emitServiceNode(child, depth + 1);
             }
         }
+
         emitLine('end', depth);
     }
 
-    const kubernetesRootKey = 'root|kubernetes';
-    if (isVisibleGroup(kubernetesRootKey)) {
-        const k8sRoot = byKey.get(kubernetesRootKey);
-        emitLine(`subgraph ${k8sRoot.mermaid}["${esc(k8sRoot.label)}"]`, 1);
-        emitLine('direction TD', 2);
-        const k8sChildren = childrenByParent.get(kubernetesRootKey) || [];
-        for (const child of k8sChildren) {
-            if (child.type === 'group') {
-                emitGroup(child.key, 2);
-            }
-        }
-        const storageClassItems = items.filter(item => item.kind === 'storageclass' && visible.has(item.key));
-        if (storageClassItems.length > 0) {
-            emitLine(`subgraph root_kubernetes_storage_classes["Storage Classes"]`, 2);
-            emitLine('direction TD', 3);
-            for (const scItem of storageClassItems) {
-                emitService(scItem.key, 3);
-            }
-            emitLine('end', 2);
-        }
-        const namespaceItems = items.filter(item => item.key.startsWith('namespace|') && item.parentKey === 'root|kubernetes|namespaces' && visible.has(item.key));
-        if (namespaceItems.length > 0) {
-            emitLine(`subgraph root_kubernetes_namespaces_container["Namespaces"]`, 2);
-            emitLine('direction TD', 3);
-            for (const nsItem of namespaceItems) {
-                if (!emitted.has(nsItem.key)) {
-                    emitted.add(nsItem.key);
-                    emitLine(`subgraph ${nsItem.mermaid}["${esc(nsItem.label)}"]`, 3);
-                    emitLine('direction TD', 4);
-                    const pvcChildren = childrenByParent.get(nsItem.key) || [];
-                    for (const pvc of pvcChildren) {
-                        if (pvc.type === 'service' && visible.has(pvc.key)) {
-                            emitService(pvc.key, 4);
-                        }
-                    }
-                    emitLine('end', 3);
-                }
-            }
-            emitLine('end', 2);
-        }
-        const pvItems = items.filter(item => item.kind === 'pv' && visible.has(item.key));
-        if (pvItems.length > 0) {
-            emitLine(`subgraph root_kubernetes_pvs["Persistent Volumes"]`, 2);
-            emitLine('direction TD', 3);
-            for (const pvItem of pvItems) {
-                emitService(pvItem.key, 3);
-            }
-            emitLine('end', 2);
-        }
-        emitLine('end', 1);
-    }
+    emitGroup('root|kubernetes', 1);
 
     for (const item of items) {
-        if (item.type === 'group' && visible.has(item.key) && !emitted.has(item.key)) {
+        if (!visible.has(item.key) || emitted.has(item.key)) {
+            continue;
+        }
+        if (item.type === 'group') {
             emitGroup(item.key, 1);
+        } else {
+            emitted.add(item.key);
+            emitServiceNode(item, 1);
         }
     }
 
-    for (const item of items) {
-        if (item.type === 'service' && visible.has(item.key) && !emitted.has(item.key)) {
-            emitService(item.key, 1);
-        }
-    }
+    emitLine('classDef cDefault fill:#f8fafc,stroke:#334155,stroke-width:1px;');
+    emitLine('classDef cNamespace fill:#dbeafe,stroke:#1d4ed8,stroke-width:1.5px;');
+    emitLine('classDef cStorageClass fill:#fef3c7,stroke:#b45309,stroke-width:1.5px;');
+    emitLine('classDef cPVC fill:#e0f2fe,stroke:#0369a1,stroke-width:1.5px;');
+    emitLine('classDef cPV fill:#e2e8f0,stroke:#475569,stroke-width:1.5px;');
+    emitLine('classDef cPod fill:#dcfce7,stroke:#15803d,stroke-width:1.5px;');
+    emitLine('classDef cNode fill:#ede9fe,stroke:#6d28d9,stroke-width:1.5px;');
+    emitLine('classDef cRegion fill:#fef2f2,stroke:#dc2626,stroke-width:1.5px;');
+    emitLine('classDef cZone fill:#fff7ed,stroke:#c2410c,stroke-width:1.5px;');
+    emitLine('classDef cDisk fill:#ecfccb,stroke:#4d7c0f,stroke-width:1.5px;');
 
-    function addEdge(fromKey, toKey, label, animate) {
-        if (!visible.has(fromKey) || !visible.has(toKey)) {
-            return;
-        }
-        const from = byKey.get(fromKey);
-        const to = byKey.get(toKey);
-        if (!from || !to) {
-            return;
-        }
-        const edgeId = `e${edgeSeq += 1}`;
-        const operator = animate ? '==>' : '-->';
-        if (label) {
-            label = `|${esc(label)}|`;
-        }
-        emitLine(`${from.mermaid} ${edgeId}@${operator}${label} ${to.mermaid}`);
-        if (animate) {
-            emitLine(`${edgeId}@{ animate: true }`);
-        }
+    for (const [nodeId, cls] of nodeClassRefs) {
+        emitLine(`class ${nodeId} ${cls}`);
     }
 
     const visibleEdges = edges
         .filter(edge => visible.has(edge.from) && visible.has(edge.to))
         .sort((a, b) => `${a.from}|${a.to}|${a.kind}|${a.label}`.localeCompare(`${b.from}|${b.to}|${b.kind}|${b.label}`));
-    const seen = new Set();
+
     for (const edge of visibleEdges) {
-        const key = `${edge.from}|${edge.to}|${edge.kind}|${edge.label}`;
-        if (seen.has(key)) {
+        const from = byKey.get(edge.from);
+        const to = byKey.get(edge.to);
+        if (!from || !to) {
             continue;
         }
-        seen.add(key);
-        addEdge(edge.from, edge.to, edge.label || edge.kind, edge.animate);
+        const edgeId = `e${edgeSeq += 1}`;
+        const operator = edge.animate ? '==>' : '-->';
+        const label = edge.label ? `|${esc(edge.label)}|` : '';
+        emitLine(`${from.mermaid} ${edgeId}@${operator}${label} ${to.mermaid}`);
+        if (edge.animate) {
+            emitLine(`${edgeId}@{ animate: true }`);
+        }
     }
 
 
