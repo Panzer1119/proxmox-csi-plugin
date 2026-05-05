@@ -10,6 +10,7 @@ const summaryEl = document.getElementById('summary');
 const generatedAtEl = document.getElementById('generatedAt');
 const hideUnusedPVsEl = document.getElementById('hideUnusedPVs');
 const hideUnusedPVCsEl = document.getElementById('hideUnusedPVCs');
+const hideUnusedDisksEl = document.getElementById('hideUnusedDisks');
 
 const emptySnapshot = {
     generatedAt: '',
@@ -364,7 +365,10 @@ function collectSnapshotModel(data, options = {}) {
             parentKey: regionsRootKey,
             searchText: [regionName, regionValue?.name || ''].filter(Boolean).join(' ')
         });
-        if (regionValue?.disks) {
+        const regionDisks = regionValue?.disks || [];
+        // Filter attached disks
+        const sharedDisks = regionDisks.filter(disk => !options.hideUnusedDisks || disk.attachedVMIds?.length > 0);
+        if (sharedDisks.length > 0) {
             addGroup({
                 key: sharedDisksKey,
                 prefix: 'shared-disks',
@@ -376,7 +380,7 @@ function collectSnapshotModel(data, options = {}) {
             });
         }
 
-        for (const disk of regionValue?.disks || []) {
+        for (const disk of sharedDisks) {
             stats.disks += 1;
             if (disk.attachedVMIds?.length) {
                 stats.attachedDisks += 1;
@@ -410,7 +414,10 @@ function collectSnapshotModel(data, options = {}) {
                 parentKey: regionKey,
                 searchText: [regionName, zoneName, zoneValue?.name || ''].filter(Boolean).join(' ')
             });
-            if (zoneValue?.disks) {
+            const zoneDisks = zoneValue?.disks || [];
+            // Filter attached disks
+            const localDisks = zoneDisks.filter(disk => !options.hideUnusedDisks || disk.attachedVMIds?.length > 0);
+            if (localDisks.length > 0) {
                 addGroup({
                     key: localDisksKey,
                     prefix: 'local-disks',
@@ -431,7 +438,7 @@ function collectSnapshotModel(data, options = {}) {
                 searchText: 'nodes'
             });
 
-            for (const disk of zoneValue?.disks || []) {
+            for (const disk of localDisks) {
                 stats.disks += 1;
                 if (disk.attachedVMIds?.length) {
                     stats.attachedDisks += 1;
@@ -506,6 +513,22 @@ function collectSnapshotModel(data, options = {}) {
     }
 
     for (const pv of pvs) {
+        if (!pvKeyByName.has(pv.name) && options.hideUnusedPVs && options.hideUnusedPVCs && pv.claimReference) {
+            //FIXME This seems to work only half way, it removes some pvcs that are actually bound and its pvs are mounted,
+            // and it does not remove some pvcs that are actually unused
+            const pvcKey = `pvc|${pv.claimReference.namespace}|${pv.claimReference.name}`;
+            // Remove pvc from pvcByKey
+            pvcByKey.delete(pvcKey)
+            // Remove pvc from index
+            index.delete(pvcKey)
+            // Remove pvc from pvcKeyByNsName
+            pvcKeyByNsName.delete(`${pv.claimReference.namespace}/${pv.claimReference.name}`);
+            const node = pvcByKey.get(pvcKey);
+            if (node) {
+                // Remove node from items
+                items.splice(items.indexOf(node), 1);
+            }
+        }
         if (pvKeyByName.has(pv.name) || options.hideUnusedPVs) {
             continue;
         }
@@ -810,6 +833,7 @@ function getOptions() {
     return {
         hideUnusedPVs: Boolean(hideUnusedPVsEl?.checked),
         hideUnusedPVCs: Boolean(hideUnusedPVCsEl?.checked),
+        hideUnusedDisks: Boolean(hideUnusedDisksEl?.checked)
     };
 }
 
@@ -891,6 +915,10 @@ if (hideUnusedPVsEl) {
 
 if (hideUnusedPVCsEl) {
     hideUnusedPVCsEl.onchange = () => render();
+}
+
+if (hideUnusedDisksEl) {
+    hideUnusedDisksEl.onchange = () => render();
 }
 
 if (diagramEl) {
