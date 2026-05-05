@@ -1,6 +1,10 @@
 package dashboard
 
-import "time"
+import (
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+)
 
 // Snapshot represents the current state of Kubernetes and Proxmox resources
 type Snapshot struct {
@@ -60,14 +64,15 @@ type KubernetesPersistentVolumeClaim struct {
 // KubernetesPersistentVolume represents a PV
 type KubernetesPersistentVolume struct {
 	KubernetesBase
-	StorageClassName string               `json:"storageClassName"`
-	Bound            bool                 `json:"bound"`
-	AccessMode       []string             `json:"accessMode"`
-	Capacity         string               `json:"capacity"`
-	Mode             string               `json:"mode"`
-	ClaimReference   *KubernetesReference `json:"claimReference,omitempty"`
-	VolumeHandle     string               `json:"volumeHandle"`
-	VolumeReference  *VolumeReference     `json:"volumeReference,omitempty"`
+	StorageClassName string                        `json:"storageClassName"`
+	Bound            bool                          `json:"bound"`
+	AccessMode       []string                      `json:"accessMode"`
+	Capacity         string                        `json:"capacity"`
+	Mode             string                        `json:"mode"`
+	Status           corev1.PersistentVolumeStatus `json:"status"`
+	ClaimReference   *KubernetesReference          `json:"claimReference,omitempty"`
+	VolumeHandle     string                        `json:"volumeHandle"`
+	VolumeReference  *VolumeReference              `json:"volumeReference,omitempty"`
 }
 
 // VolumeReference contains parsed volume handle information

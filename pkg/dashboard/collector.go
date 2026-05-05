@@ -275,6 +275,7 @@ func (c *Collector) collectPersistentVolumes(ctx context.Context) []KubernetesPe
 			AccessMode:       accessModes,
 			Capacity:         pv.Spec.Capacity.Storage().String(),
 			Mode:             mode,
+			Status:           pv.Status,
 			ClaimReference:   claimRef,
 			VolumeHandle:     pv.Spec.CSI.VolumeHandle,
 			VolumeReference:  volRef,
