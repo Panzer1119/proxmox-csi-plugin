@@ -196,7 +196,7 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 	}
 	// maps
 	claimToPods := map[string][]corev1.Pod{}
-	podsByNode := map[string][]corev1.Pod{}
+	podsByNodeName := map[string][]corev1.Pod{}
 	relevantPods := map[string]corev1.Pod{}
 	for _, p := range podList.Items {
 		used := false
@@ -213,7 +213,7 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 		if used {
 			relevantPods[p.Namespace+"/"+p.Name] = p
 			if p.Spec.NodeName != "" {
-				podsByNode[p.Spec.NodeName] = append(podsByNode[p.Spec.NodeName], p)
+				podsByNodeName[p.Spec.NodeName] = append(podsByNodeName[p.Spec.NodeName], p)
 			}
 		}
 	}
@@ -225,7 +225,7 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 	}
 	// find nodes that have relevant pods
 	relevantNodeNames := map[string]struct{}{}
-	for n := range podsByNode {
+	for n := range podsByNodeName {
 		relevantNodeNames[n] = struct{}{}
 	}
 	relevantNodes := make([]*corev1.Node, 0)
@@ -276,8 +276,8 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 		}
 	}
 
-	// build map vmid->k8s node name for quick lookup
-	vmidToNode := map[string]string{}
+	// build map vm identifier->k8s node for quick lookup
+	nodeByVMIdentifier := map[string]*corev1.Node{}
 	for region, vms := range vmsByRegion {
 		for _, v := range vms {
 			if v.RS != nil {
@@ -286,7 +286,7 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 				if uuid := goproxmox.GetVMUUID(v.VM); uuid != "" {
 					for _, n := range relevantNodes {
 						if n.Status.NodeInfo.SystemUUID != "" && strings.EqualFold(uuid, n.Status.NodeInfo.SystemUUID) {
-							vmidToNode[vmid] = n.Name
+							nodeByVMIdentifier[vmid] = n
 						}
 					}
 				}
@@ -424,11 +424,17 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 			}
 			pvm := ProxmoxVM{ID: fmt.Sprintf("%d", vm.RS.VMID), Name: vm.VM.Name}
 			// attach node/k8s info if available
-			if k8sNode, ok := vmidToNode[fmt.Sprintf("%s/%s/%d", region, vm.RS.Node, vm.RS.VMID)]; ok {
+			if k8sNode, ok := nodeByVMIdentifier[fmt.Sprintf("%s/%s/%d", region, vm.RS.Node, vm.RS.VMID)]; ok {
 				// populate KubernetesNode
-				kn := KubernetesNode{KubernetesBase: KubernetesBase{KubernetesReference: KubernetesReference{Kind: "Node", Name: k8sNode}}, Pods: []KubernetesPod{}}
+				kn := KubernetesNode{KubernetesBase: KubernetesBase{KubernetesReference: KubernetesReference{Kind: "Node", Name: k8sNode.Name, UID: string(k8sNode.UID)}, CreatedAt: k8sNode.CreationTimestamp.Time}, Pods: []KubernetesPod{}}
+				if k8sNode.Annotations != nil {
+					kn.Annotations = k8sNode.Annotations
+				}
+				if k8sNode.Labels != nil {
+					kn.Labels = k8sNode.Labels
+				}
 				// attach pods scheduled to this node
-				for _, p := range podsByNode[k8sNode] {
+				for _, p := range podsByNodeName[k8sNode.Name] {
 					kp := KubernetesPod{KubernetesBase: KubernetesBase{KubernetesReference: KubernetesReference{Kind: "Pod", Namespace: p.Namespace, Name: p.Name, UID: string(p.UID)}, CreatedAt: p.CreationTimestamp.Time}, Hostname: p.Spec.Hostname, Volumes: map[string]string{}}
 					if p.Annotations != nil {
 						kp.Annotations = p.Annotations
