@@ -8,6 +8,8 @@ const copyFallbackBtn = document.getElementById('copyFallback');
 const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('summary');
 const generatedAtEl = document.getElementById('generatedAt');
+const hideUnusedPVsEl = document.getElementById('hideUnusedPVs');
+const hideUnusedPVCsEl = document.getElementById('hideUnusedPVCs');
 
 const emptySnapshot = {
     generatedAt: '',
@@ -143,7 +145,7 @@ function createItem(items, index, item) {
     return node;
 }
 
-function collectSnapshotModel(data) {
+function collectSnapshotModel(data, options = {}) {
     const items = [];
     const index = new Map();
     const edges = [];
@@ -235,6 +237,8 @@ function collectSnapshotModel(data) {
     const pvKeyByName = new Map();
     const podKeyByPVName = new Map();
     const diskKeyByExact = new Map();
+    const pvcByKey = new Map();
+    const pvByKey = new Map();
     const orphanPvGroupByZone = new Map();
 
     for (const ns of namespaces) {
@@ -286,7 +290,7 @@ function collectSnapshotModel(data) {
         }
         const key = `pvc|${pvc.namespace}|${pvc.name}`;
         pvcKeyByNsName.set(`${pvc.namespace}/${pvc.name}`, key);
-        addService({
+        const pvcNode = addService({
             key,
             prefix: 'pvc',
             kind: 'pvc',
@@ -295,6 +299,10 @@ function collectSnapshotModel(data) {
             parentKey: parentSC,
             searchText: [pvc.namespace, pvc.name, pvc.storageClassName, pvc.bound ? 'bound' : 'pending', pvc.volumeName || ''].filter(Boolean).join(' ')
         });
+        // keep a reference to the original pvc object for later filtering decisions
+        if (pvcNode) {
+            pvcByKey.set(key, pvc);
+        }
     }
     if (hasUnclassifiedPVC) {
         addGroup({
@@ -324,6 +332,7 @@ function collectSnapshotModel(data) {
         if (!pv) {
             return null;
         }
+        // create the PV node and keep reference for later filtering if needed
         const key = `pv|${pvName}`;
         pvKeyByName.set(pvName, key);
         addService({
@@ -335,6 +344,7 @@ function collectSnapshotModel(data) {
             parentKey,
             searchText: [pv.name, pv.bound ? 'bound' : 'unbound', pv.storageClassName || '', pv.volumeHandle || ''].filter(Boolean).join(' ')
         });
+        pvByKey.set(key, pv);
         return key;
     };
 
@@ -496,7 +506,7 @@ function collectSnapshotModel(data) {
     }
 
     for (const pv of pvs) {
-        if (pvKeyByName.has(pv.name)) {
+        if (pvKeyByName.has(pv.name) || options.hideUnusedPVs) {
             continue;
         }
         const ref = pv.volumeReference;
@@ -609,9 +619,9 @@ function visibleItems(items, query) {
     return visible;
 }
 
-function buildMermaid(data) {
+function buildMermaid(data, options) {
     const query = (filterEl?.value || '').trim().toLowerCase();
-    const {items, edges} = collectSnapshotModel(data);
+    const {items, edges} = collectSnapshotModel(data, options);
     const visible = visibleItems(items, query);
     const byKey = new Map(items.map(item => [item.key, item]));
 
@@ -752,13 +762,13 @@ function buildMermaid(data) {
     return lines.join('\n');
 }
 
-function summarizeSnapshot(data) {
-    const {stats} = collectSnapshotModel(data);
+function summarizeSnapshot(data, options = {}) {
+    const {stats} = collectSnapshotModel(data, options);
     return stats;
 }
 
-function updateSidebar(data) {
-    const stats = summarizeSnapshot(data);
+function updateSidebar(data, options = {}) {
+    const stats = summarizeSnapshot(data, options);
     const cards = [
         ['Regions', stats.regions],
         ['Zones', stats.zones],
@@ -796,14 +806,22 @@ function updateSidebar(data) {
     }
 }
 
+function getOptions() {
+    return {
+        hideUnusedPVs: Boolean(hideUnusedPVsEl?.checked),
+        hideUnusedPVCs: Boolean(hideUnusedPVCsEl?.checked),
+    };
+}
+
 async function render() {
     if (!diagramEl) {
         return;
     }
     const token = ++renderToken;
-    mermaidSource = buildMermaid(snapshot);
-    mermaidSourceFallback = buildMermaid(snapshot);
-    updateSidebar(snapshot);
+    const opts = getOptions();
+    mermaidSource = buildMermaid(snapshot, opts);
+    mermaidSourceFallback = buildMermaid(snapshot, opts);
+    updateSidebar(snapshot, opts);
 
     try {
         const {svg} = await mermaid.render(`topology_${token}`, mermaidSource);
@@ -865,6 +883,14 @@ if (copyFallbackBtn) {
 
 if (filterEl) {
     filterEl.oninput = () => render();
+}
+
+if (hideUnusedPVsEl) {
+    hideUnusedPVsEl.onchange = () => render();
+}
+
+if (hideUnusedPVCsEl) {
+    hideUnusedPVCsEl.onchange = () => render();
 }
 
 if (diagramEl) {
