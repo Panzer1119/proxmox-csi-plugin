@@ -29,11 +29,15 @@ type Config struct {
 }
 
 type Server struct {
-	cfg        Config
-	kube       kubernetes.Interface
-	proxmox    *proxmoxpool.ProxmoxPool
-	store      *Store
-	httpServer *http.Server
+	cfg              Config
+	kube             kubernetes.Interface
+	proxmox          *proxmoxpool.ProxmoxPool
+	store            *Store
+	httpServer       *http.Server
+	collectorMu      sync.Mutex
+	collectorCtx     context.Context
+	collectorCancel  context.CancelFunc
+	collectorRunning bool
 }
 
 func New(cfg Config, kube kubernetes.Interface) (*Server, error) {
@@ -75,11 +79,14 @@ func (s *Server) Start(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
-	collector := &Collector{kube: s.kube, proxmox: s.proxmox}
-	_ = collector.Collect(ctx, s.store)
-	go s.runCollector(ctx, collector)
+	s.collectorCtx, s.collectorCancel = context.WithCancel(context.Background())
 	go func() {
 		<-ctx.Done()
+		s.collectorMu.Lock()
+		if s.collectorCancel != nil {
+			s.collectorCancel()
+		}
+		s.collectorMu.Unlock()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.httpServer.Shutdown(shutdownCtx)
@@ -104,6 +111,25 @@ func (s *Server) runCollector(ctx context.Context, collector *Collector) {
 	}
 }
 
+func (s *Server) ensureCollectorRunning() {
+	s.collectorMu.Lock()
+	defer s.collectorMu.Unlock()
+	if s.collectorRunning || s.store.SubscriberCount() == 0 {
+		return
+	}
+	s.collectorRunning = true
+	collector := &Collector{kube: s.kube, proxmox: s.proxmox}
+	_ = collector.Collect(s.collectorCtx, s.store)
+	go s.monitorCollector(collector)
+}
+
+func (s *Server) monitorCollector(collector *Collector) {
+	s.runCollector(s.collectorCtx, collector)
+	s.collectorMu.Lock()
+	s.collectorRunning = false
+	s.collectorMu.Unlock()
+}
+
 func (s *Server) redirectDashboard(w http.ResponseWriter, r *http.Request) {
 	target := strings.TrimPrefix(r.URL.Path, "/dashboard")
 	if target == "" {
@@ -113,6 +139,8 @@ func (s *Server) redirectDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTopology(w http.ResponseWriter, _ *http.Request) {
+	// Ensure collector is running to provide fresh data
+	s.ensureCollectorRunning()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(s.store.Get())
 }
@@ -126,6 +154,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ch, cancel := s.store.Subscribe()
+	// Start collector when first stream subscribes
+	s.ensureCollectorRunning()
 	defer cancel()
 	for {
 		select {
@@ -159,6 +189,11 @@ func (s *Store) Set(ss Snapshot) {
 	}
 }
 func (s *Store) Get() Snapshot { s.mu.RLock(); defer s.mu.RUnlock(); return s.snapshot }
+func (s *Store) SubscriberCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.subscribers)
+}
 func (s *Store) Subscribe() (<-chan Snapshot, func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
