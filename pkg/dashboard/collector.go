@@ -170,6 +170,16 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 		}
 		if pv.Spec.CSI != nil {
 			kpv.VolumeHandle = pv.Spec.CSI.VolumeHandle
+			vol, err := volume.NewVolumeFromVolumeID(kpv.VolumeHandle)
+			if err == nil {
+				kpv.VolumeReference = &VolumeReference{
+					Region:  vol.Region(),
+					Zone:    vol.Zone(),
+					Node:    vol.Node(),
+					Storage: vol.Storage(),
+					Disk:    vol.Disk(),
+				}
+			}
 		}
 		relevantPVs = append(relevantPVs, kpv)
 	}
