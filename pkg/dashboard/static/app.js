@@ -504,10 +504,10 @@ function collectSnapshotModel(data, options = {}) {
 
     const removedPVCKeys = new Set();
     for (const pv of pvs) {
-        if (!pvKeyByName.has(pv.name) && options.hideUnusedPVs && options.hideUnusedPVCs && pv.claimReference) {
+        if (!pvKeyByName.has(pv.name) && pv.status?.phase === "Bound" && options.hideUnusedPVs && options.hideUnusedPVCs && pv.claimReference) {
             //FIXME This seems to work only half way, it removes some pvcs that are actually bound and its pvs are mounted,
             // and it does not remove some pvcs that are actually unused
-            const pvcKey = `pvc|${pv.claimReference.namespace}|${pv.claimReference.name}`;
+            const pvcKey = pvcKeyByNsName.get(`${pv.claimReference.namespace}/${pv.claimReference.name}`) || `pvc|${pv.claimReference.namespace}|${pv.claimReference.name}`;
             if (!removedPVCKeys.has(pvcKey)) {
                 removedPVCKeys.add(pvcKey);
                 if (index.has(pvcKey)) {
@@ -570,7 +570,7 @@ function collectSnapshotModel(data, options = {}) {
 
     for (const pvc of pvcs) {
         const pvcKey = pvcKeyByNsName.get(`${pvc.namespace}/${pvc.name}`);
-        if (!pvcKey) {
+        if (!pvcKey || removedPVCKeys.has(pvcKey)) {
             continue;
         }
         const nsKey = namespaceKeyByName.get(pvc.namespace);
