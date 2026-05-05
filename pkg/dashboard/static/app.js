@@ -47,7 +47,7 @@ function mermaidId(prefix, key) {
 }
 
 function esc(value) {
-    return String(value).replaceAll('"', '#quot;');
+    return '"`' + String(value).replaceAll('"', '#quot;') + '`"';
 }
 
 function formatBytes(bytes) {
@@ -75,12 +75,20 @@ function formatGeneratedAt(value) {
     return `Generated at ${date.toLocaleString()}`;
 }
 
+function bold(text) {
+    return "**" + text + "**";
+}
+
+function italics(text) {
+    return "*" + text + "*";
+}
+
 function label(text, ...badges) {
-    return [text, ...badges.filter(Boolean)].join(' · ');
+    return [bold(text), ...badges.filter(Boolean)].join(' · ');
 }
 
 function formatDiskName(disk) {
-    const parts = [disk.name || disk.storageId || 'disk'];
+    const parts = [bold(disk.name || disk.storageId || 'disk')];
     if (disk.sizeBytes && Number.isFinite(disk.sizeBytes)) {
         parts.push(formatBytes(disk.sizeBytes));
     }
@@ -107,7 +115,8 @@ function formatStorageClassName(sc) {
 }
 
 function formatPvcName(pvc) {
-    return label(pvc.name || 'pvc', pvc.bound ? 'bound' : 'pending', pvc.capacityRequest || '', pvc.storageClassName || '');
+    // return label(pvc.name || 'pvc', pvc.bound ? 'bound' : 'pending', pvc.capacityRequest || '', pvc.storageClassName || '');
+    return label(pvc.name || 'pvc', pvc.bound ? 'bound' : 'pending', pvc.capacityRequest || '');
 }
 
 function formatPvName(pv) {
@@ -157,7 +166,7 @@ function collectSnapshotModel(data) {
     };
 
     const edgeSet = new Set();
-    const addEdge = (from, to, kind, label, animate) => {
+    const addEdge = (from, to, kind, label, operator, animate) => {
         if (!from || !to) {
             return;
         }
@@ -166,7 +175,7 @@ function collectSnapshotModel(data) {
             return;
         }
         edgeSet.add(dedupe);
-        edges.push({from, to, kind, label, animate});
+        edges.push({from, to, kind, label, operator, animate});
     };
 
     const addGroup = item => createItem(items, index, {...item, type: 'group'});
@@ -181,7 +190,7 @@ function collectSnapshotModel(data) {
         key: rootKey,
         prefix: 'root',
         kind: 'kubernetes-root',
-        label: 'Kubernetes',
+        label: bold('Kubernetes'),
         badgeText: '',
         searchText: 'kubernetes'
     });
@@ -189,7 +198,7 @@ function collectSnapshotModel(data) {
         key: namespacesRootKey,
         prefix: 'namespaces',
         kind: 'namespaces',
-        label: 'Namespaces',
+        label: bold('Namespaces'),
         badgeText: '',
         parentKey: rootKey,
         searchText: 'namespaces'
@@ -198,7 +207,7 @@ function collectSnapshotModel(data) {
         key: storageClassesRootKey,
         prefix: 'storageclasses',
         kind: 'storageclasses',
-        label: 'StorageClasses',
+        label: bold('StorageClasses'),
         badgeText: '',
         parentKey: rootKey,
         searchText: 'storageclasses'
@@ -207,7 +216,7 @@ function collectSnapshotModel(data) {
         key: regionsRootKey,
         prefix: 'regions',
         kind: 'regions',
-        label: 'Regions',
+        label: bold('Regions'),
         badgeText: '',
         parentKey: rootKey,
         searchText: 'regions'
@@ -292,7 +301,7 @@ function collectSnapshotModel(data) {
             key: unclassifiedStorageClassKey,
             prefix: 'storageclass',
             kind: 'storageclass',
-            label: 'StorageClass: <none>',
+            label: bold('StorageClass: <none>'),
             badgeText: '',
             parentKey: storageClassesRootKey,
             searchText: 'storageclass none'
@@ -340,20 +349,22 @@ function collectSnapshotModel(data) {
             key: regionKey,
             prefix: 'region',
             kind: 'region',
-            label: regionValue?.name || regionName,
+            label: bold(regionValue?.name || regionName),
             badgeText: '',
             parentKey: regionsRootKey,
             searchText: [regionName, regionValue?.name || ''].filter(Boolean).join(' ')
         });
-        addGroup({
-            key: sharedDisksKey,
-            prefix: 'shared-disks',
-            kind: 'shared-disks',
-            label: 'SharedDisks',
-            badgeText: '',
-            parentKey: regionKey,
-            searchText: 'shared disks'
-        });
+        if (regionValue?.disks) {
+            addGroup({
+                key: sharedDisksKey,
+                prefix: 'shared-disks',
+                kind: 'shared-disks',
+                label: bold('SharedDisks'),
+                badgeText: '',
+                parentKey: regionKey,
+                searchText: 'shared disks'
+            });
+        }
 
         for (const disk of regionValue?.disks || []) {
             stats.disks += 1;
@@ -384,25 +395,27 @@ function collectSnapshotModel(data) {
                 key: zoneKey,
                 prefix: 'zone',
                 kind: 'zone',
-                label: zoneValue?.name || zoneName,
+                label: bold(zoneValue?.name || zoneName),
                 badgeText: '',
                 parentKey: regionKey,
                 searchText: [regionName, zoneName, zoneValue?.name || ''].filter(Boolean).join(' ')
             });
-            addGroup({
-                key: localDisksKey,
-                prefix: 'local-disks',
-                kind: 'local-disks',
-                label: 'LocalDisks',
-                badgeText: '',
-                parentKey: zoneKey,
-                searchText: 'local disks'
-            });
+            if (zoneValue?.disks) {
+                addGroup({
+                    key: localDisksKey,
+                    prefix: 'local-disks',
+                    kind: 'local-disks',
+                    label: bold('LocalDisks'),
+                    badgeText: '',
+                    parentKey: zoneKey,
+                    searchText: 'local disks'
+                });
+            }
             addGroup({
                 key: nodesRootKey,
                 prefix: 'nodes',
                 kind: 'nodes',
-                label: 'Nodes',
+                label: bold('Nodes'),
                 badgeText: '',
                 parentKey: zoneKey,
                 searchText: 'nodes'
@@ -496,7 +509,7 @@ function collectSnapshotModel(data) {
                     key: zoneOrphanKey,
                     prefix: 'orphan-pvs',
                     kind: 'pvs',
-                    label: 'PVs',
+                    label: bold('PVs'),
                     badgeText: '',
                     parentKey: `zone|${ref.region}|${ref.zone}`,
                     searchText: 'pvs'
@@ -514,26 +527,26 @@ function collectSnapshotModel(data) {
         }
         const nsKey = namespaceKeyByName.get(pvc.namespace);
         if (nsKey) {
-            addEdge(nsKey, pvcKey, 'namespace-pvc', 'contains', false);
+            addEdge(nsKey, pvcKey, 'namespace-pvc', 'contains');
         }
         if (pvc.volumeName) {
             const pvKey = pvKeyByName.get(pvc.volumeName);
             if (pvKey) {
-                addEdge(pvcKey, pvKey, 'pvc-pv', 'binds', Boolean(pvc.bound));
+                addEdge(pvcKey, pvKey, 'pvc-pv', 'binds');
             }
         }
     }
 
-    for (const [pvName, podKeys] of podKeyByPVName.entries()) {
-        const pvKey = pvKeyByName.get(pvName);
-        const pv = pvByName.get(pvName);
-        if (!pvKey || !pv) {
-            continue;
-        }
-        for (const podKey of podKeys) {
-            addEdge(pvKey, podKey, 'pv-pod', 'mounted', Boolean(pv.bound));
-        }
-    }
+    // for (const [pvName, podKeys] of podKeyByPVName.entries()) {
+    //     const pvKey = pvKeyByName.get(pvName);
+    //     const pv = pvByName.get(pvName);
+    //     if (!pvKey || !pv) {
+    //         continue;
+    //     }
+    //     for (const podKey of podKeys) {
+    //         addEdge(pvKey, podKey, 'pv-pod', 'mounted', '==>', Boolean(pv.bound)); //TODO
+    //     }
+    // }
 
     for (const pv of pvs) {
         const pvKey = pvKeyByName.get(pv.name);
@@ -543,7 +556,7 @@ function collectSnapshotModel(data) {
         const ref = pv.volumeReference;
         const diskKey = diskKeyByExact.get(`${ref.region}|${ref.zone || ''}|${ref.storage}|${ref.disk}`) || diskKeyByExact.get(`${ref.region}||${ref.storage}|${ref.disk}`);
         if (diskKey) {
-            addEdge(diskKey, pvKey, 'disk-pv', 'backs', true);
+            addEdge(diskKey, pvKey, 'disk-pv', 'backs', pv.bound ? '==>' : '-->', pv.bound);
         }
     }
 
@@ -617,7 +630,7 @@ function buildMermaid(data) {
     }
 
     const indent = '    ';
-    const lines = ['flowchart LR'];
+    const lines = ['---', 'config:', '  htmlLabels: false', '---', 'flowchart LR'];
     const emitted = new Set();
     const nodeClassRefs = [];
     let edgeSeq = 0;
@@ -649,7 +662,7 @@ function buildMermaid(data) {
         if (item.kind === 'disk') {
             return `[/${esc(item.label)}/]`;
         }
-        return `["${esc(item.label)}"]`;
+        return `[${esc(item.label)}]`;
     }
 
     function emitServiceNode(item, depth) {
@@ -664,7 +677,7 @@ function buildMermaid(data) {
         }
         emitted.add(key);
 
-        emitLine(`subgraph ${item.mermaid}["${esc(item.label)}"]`, depth);
+        emitLine(`subgraph ${item.mermaid}[${esc(item.label)}]`, depth);
         emitLine(depth === 1 ? 'direction LR' : 'direction TD', depth + 1);
 
         const children = childrenByParent.get(key) || [];
@@ -697,16 +710,16 @@ function buildMermaid(data) {
         }
     }
 
-    emitLine('classDef cDefault fill:#f8fafc,stroke:#334155,stroke-width:1px;');
-    emitLine('classDef cNamespace fill:#dbeafe,stroke:#1d4ed8,stroke-width:1.5px;');
-    emitLine('classDef cStorageClass fill:#fef3c7,stroke:#b45309,stroke-width:1.5px;');
-    emitLine('classDef cPVC fill:#e0f2fe,stroke:#0369a1,stroke-width:1.5px;');
-    emitLine('classDef cPV fill:#e2e8f0,stroke:#475569,stroke-width:1.5px;');
-    emitLine('classDef cPod fill:#dcfce7,stroke:#15803d,stroke-width:1.5px;');
-    emitLine('classDef cNode fill:#ede9fe,stroke:#6d28d9,stroke-width:1.5px;');
-    emitLine('classDef cRegion fill:#fef2f2,stroke:#dc2626,stroke-width:1.5px;');
-    emitLine('classDef cZone fill:#fff7ed,stroke:#c2410c,stroke-width:1.5px;');
-    emitLine('classDef cDisk fill:#ecfccb,stroke:#4d7c0f,stroke-width:1.5px;');
+    // emitLine('classDef cDefault fill:#f8fafc,stroke:#334155,stroke-width:1px;');
+    // emitLine('classDef cNamespace fill:#dbeafe,stroke:#1d4ed8,stroke-width:1.5px;');
+    // emitLine('classDef cStorageClass fill:#fef3c7,stroke:#b45309,stroke-width:1.5px;');
+    // emitLine('classDef cPVC fill:#e0f2fe,stroke:#0369a1,stroke-width:1.5px;');
+    // emitLine('classDef cPV fill:#e2e8f0,stroke:#475569,stroke-width:1.5px;');
+    // emitLine('classDef cPod fill:#dcfce7,stroke:#15803d,stroke-width:1.5px;');
+    // emitLine('classDef cNode fill:#ede9fe,stroke:#6d28d9,stroke-width:1.5px;');
+    // emitLine('classDef cRegion fill:#fef2f2,stroke:#dc2626,stroke-width:1.5px;');
+    // emitLine('classDef cZone fill:#fff7ed,stroke:#c2410c,stroke-width:1.5px;');
+    // emitLine('classDef cDisk fill:#ecfccb,stroke:#4d7c0f,stroke-width:1.5px;');
 
     for (const [nodeId, cls] of nodeClassRefs) {
         emitLine(`class ${nodeId} ${cls}`);
@@ -723,11 +736,15 @@ function buildMermaid(data) {
             continue;
         }
         const edgeId = `e${edgeSeq += 1}`;
-        const operator = edge.animate ? '==>' : '-->';
+        const operator = edge.operator ?? '-->';
         const label = edge.label ? `|${esc(edge.label)}|` : '';
         emitLine(`${from.mermaid} ${edgeId}@${operator}${label} ${to.mermaid}`);
         if (edge.animate) {
-            emitLine(`${edgeId}@{ animate: true }`);
+            if (edge.animate === "fast") {
+                emitLine(`${edgeId}@{ animate: true, animation: fast }`);
+            } else {
+                emitLine(`${edgeId}@{ animate: true, animation: slow }`);
+            }
         }
     }
 
