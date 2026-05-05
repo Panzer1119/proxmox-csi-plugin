@@ -47,6 +47,9 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 		}
 		if sc.Provisioner == csi.DriverName {
 			scNames[sc.Name] = struct{}{}
+		} else {
+			// Ignore storage classes that are not from us
+			continue
 		}
 		if sc.Annotations != nil {
 			ksc.Annotations = sc.Annotations
