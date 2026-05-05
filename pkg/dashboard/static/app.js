@@ -23,33 +23,11 @@ const emptySnapshot = {
 let snapshot = emptySnapshot;
 let mermaidSource = '';
 let mermaidSourceFallback = '';
-let iconPackReady = null;
 let renderToken = 0;
 let statusResetTimer = null;
 let baseStatusText = 'Waiting for snapshot…';
 
 mermaid.initialize({startOnLoad: false, securityLevel: 'loose'});
-
-async function loadMdiIconPack() {
-    return fetch('https://cdn.jsdelivr.net/npm/@iconify-json/mdi/icons.json').then(r => r.json());
-}
-
-async function ensureIcons() {
-    if (!iconPackReady) {
-        iconPackReady = (async () => {
-            try {
-                mermaid.registerIconPacks([{
-                    name: 'mdi',
-                    loader: loadMdiIconPack
-                }]);
-                return true;
-            } catch {
-                return false;
-            }
-        })();
-    }
-    return iconPackReady;
-}
 
 function hashString(value) {
     let hash = 2166136261;
@@ -95,27 +73,6 @@ function formatGeneratedAt(value) {
         return `Generated at ${value}`;
     }
     return `Generated at ${date.toLocaleString()}`;
-}
-
-function iconFor(kind, loaded) {
-    const icon = {
-        'proxmox-root': loaded ? 'mdi:cloud-outline' : 'cloud',
-        'kubernetes-root': loaded ? 'mdi:kubernetes' : 'server',
-        region: loaded ? 'mdi:map-outline' : 'cloud',
-        zone: loaded ? 'mdi:server-network' : 'server',
-        qemu: loaded ? 'mdi:monitor-dashboard' : 'server',
-        lxc: loaded ? 'mdi:docker' : 'server',
-        'k8s-node': loaded ? 'mdi:kubernetes' : 'server',
-        pod: loaded ? 'mdi:cube-outline' : 'disk',
-        namespace: loaded ? 'mdi:shield-home-outline' : 'database',
-        storage: loaded ? 'mdi:database-cog-outline' : 'database',
-        storageclass: loaded ? 'mdi:layers-outline' : 'database',
-        pvc: loaded ? 'mdi:database-outline' : 'database',
-        pv: loaded ? 'mdi:harddisk' : 'disk',
-        'shared-disk': loaded ? 'mdi:nas' : 'disk',
-        'local-disk': loaded ? 'mdi:harddisk' : 'disk'
-    };
-    return icon[kind] || (loaded ? 'mdi:shape-outline' : 'cloud');
 }
 
 function label(text, ...badges) {
@@ -578,7 +535,7 @@ function visibleItems(items, query) {
     return visible;
 }
 
-function buildMermaid(data, iconLoaded) {
+function buildMermaid(data) {
     const query = (filterEl?.value || '').trim().toLowerCase();
     const {items, edges} = collectSnapshotModel(data);
     const visible = visibleItems(items, query);
@@ -599,87 +556,97 @@ function buildMermaid(data, iconLoaded) {
     }
 
     const indent = '    ';
-    const lines = ['architecture-beta'];
+    const lines = ['flowchart LR'];
     const emitted = new Set();
+    let edgeSeq = 0;
 
-    function emitLine(line) {
-        lines.push(`${indent}${line}`);
+    function emitLine(line, depth = 1) {
+        lines.push(`${indent.repeat(depth)}${line}`);
     }
 
-    function resolveParentGroup(item) {
-        if (!item.parentKey || !visible.has(item.parentKey) || !groupKeys.has(item.parentKey)) {
-            return '';
+    function isVisibleGroup(key) {
+        return visible.has(key) && groupKeys.has(key) && byKey.get(key)?.type === 'group';
+    }
+
+    function isValidParentGroup(item) {
+        if (!item.parentKey) {
+            return true;
         }
         const parent = byKey.get(item.parentKey);
-        if (!parent || parent.type !== 'group') {
-            return '';
-        }
-        return ` in ${parent.mermaid}`;
+        return Boolean(parent && parent.type === 'group' && visible.has(parent.key) && groupKeys.has(parent.key));
     }
 
-    function emitGroup(key) {
+    function emitNode(item, depth) {
+        emitLine(`${item.mermaid}["${esc(item.label)}"]`, depth);
+    }
+
+    function emitService(key, depth) {
         const item = byKey.get(key);
-        if (!item || item.type !== 'group' || !visible.has(key) || emitted.has(key)) {
+        if (!item || item.type !== 'service' || !visible.has(key) || emitted.has(key) || !isValidParentGroup(item)) {
             return;
         }
         emitted.add(key);
-        const icon = iconFor(item.kind, iconLoaded);
-        emitLine(`${item.type} ${item.mermaid}(${icon})["${esc(item.label)}"]${resolveParentGroup(item)}`);
-        for (const child of childrenByParent.get(key) || []) {
+        emitNode(item, depth);
+    }
+
+    function emitGroup(key, depth) {
+        const item = byKey.get(key);
+        if (!item || item.type !== 'group' || !isVisibleGroup(key) || emitted.has(key)) {
+            return;
+        }
+        emitted.add(key);
+        emitLine(`subgraph ${item.mermaid}["${esc(item.label)}"]`, depth);
+        emitLine('direction TD', depth + 1);
+        const children = childrenByParent.get(key) || [];
+        for (const child of children) {
             if (child.type === 'group') {
-                emitGroup(child.key);
+                emitGroup(child.key, depth + 1);
             }
         }
-    }
-
-    const roots = items.filter(item => !item.parentKey).sort((a, b) => a.type.localeCompare(b.type) || a.label.localeCompare(b.label));
-    for (const root of roots) {
-        if (root.type === 'group') {
-            emitGroup(root.key);
-        }
-    }
-
-    for (const item of items) {
-        if (!visible.has(item.key) || emitted.has(item.key) || item.type !== 'group') {
-            continue;
-        }
-        emitGroup(item.key);
-    }
-
-    function emitService(key) {
-        const item = byKey.get(key);
-        if (!item || item.type !== 'service' || !visible.has(key) || emitted.has(key)) {
-            return;
-        }
-        emitted.add(key);
-        const icon = iconFor(item.kind, iconLoaded);
-        emitLine(`${item.type} ${item.mermaid}(${icon})["${esc(item.label)}"]${resolveParentGroup(item)}`);
-    }
-
-    function emitServicesUnder(key) {
-        for (const child of childrenByParent.get(key) || []) {
+        for (const child of children) {
             if (child.type === 'service') {
-                emitService(child.key);
+                emitService(child.key, depth + 1);
             }
         }
-        for (const child of childrenByParent.get(key) || []) {
-            if (child.type === 'group') {
-                emitServicesUnder(child.key);
-            }
-        }
+        emitLine('end', depth);
     }
 
+    const roots = items
+        .filter(item => !item.parentKey && item.type === 'group')
+        .sort((a, b) => a.label.localeCompare(b.label));
     for (const root of roots) {
-        if (root.type === 'group') {
-            emitServicesUnder(root.key);
+        emitGroup(root.key, 1);
+    }
+
+    for (const item of items) {
+        if (item.type === 'group' && visible.has(item.key) && !emitted.has(item.key) && isValidParentGroup(item)) {
+            emitGroup(item.key, 1);
         }
     }
 
     for (const item of items) {
-        if (!visible.has(item.key) || emitted.has(item.key) || item.type !== 'service') {
-            continue;
+        if (item.type === 'service' && visible.has(item.key) && !emitted.has(item.key)) {
+            emitService(item.key, 1);
         }
-        emitService(item.key);
+    }
+
+    function addEdge(fromKey, toKey, kind, label) {
+        if (!visible.has(fromKey) || !visible.has(toKey)) {
+            return;
+        }
+        const from = byKey.get(fromKey);
+        const to = byKey.get(toKey);
+        if (!from || !to) {
+            return;
+        }
+        const edgeId = `e${edgeSeq += 1}`;
+        const animate = kind === 'bound-to' || kind === 'backed-by';
+        const operator = animate ? '==>' : kind === 'provisioned-by' ? '-.->' : '-->';
+        void label;
+        emitLine(`${from.mermaid} ${edgeId}@${operator} ${to.mermaid}`);
+        if (animate) {
+            emitLine(`${edgeId}@{ animate: true }`);
+        }
     }
 
     const visibleEdges = edges
@@ -692,19 +659,9 @@ function buildMermaid(data, iconLoaded) {
             continue;
         }
         seen.add(key);
-        const from = byKey.get(edge.from);
-        const to = byKey.get(edge.to);
-        if (!from || !to) {
-            continue;
-        }
-        if (edge.kind === 'attached' || edge.kind === 'hosts') {
-            emitLine(`${from.mermaid}:R -- L:${to.mermaid}`);
-        } else if (edge.kind === 'provisioned-by' || edge.kind === 'bound-to') {
-            emitLine(`${from.mermaid}:R -- L:${to.mermaid}`);
-        } else if (edge.kind === 'backed-by' || edge.kind === 'uses') {
-            emitLine(`${from.mermaid}:B -- T:${to.mermaid}`);
-        }
+        addEdge(edge.from, edge.to, edge.kind, edge.label);
     }
+
 
     return lines.join('\n');
 }
@@ -758,12 +715,8 @@ async function render() {
         return;
     }
     const token = ++renderToken;
-    const iconLoaded = await ensureIcons();
-    if (token !== renderToken) {
-        return;
-    }
-    mermaidSource = buildMermaid(snapshot, iconLoaded);
-    mermaidSourceFallback = buildMermaid(snapshot, false);
+    mermaidSource = buildMermaid(snapshot);
+    mermaidSourceFallback = buildMermaid(snapshot);
     updateSidebar(snapshot);
 
     try {
