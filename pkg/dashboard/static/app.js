@@ -13,13 +13,8 @@ const hideUnusedPVCsEl = document.getElementById('hideUnusedPVCs');
 const hideUnusedDisksEl = document.getElementById('hideUnusedDisks');
 
 const emptySnapshot = {
-    generatedAt: '',
-    regions: {},
-    kubernetes: {
-        namespaces: [],
-        storageClasses: [],
-        persistentVolumeClaims: [],
-        persistentVolumes: []
+    generatedAt: '', regions: {}, kubernetes: {
+        namespaces: [], storageClasses: [], persistentVolumeClaims: [], persistentVolumes: []
     }
 };
 
@@ -129,17 +124,9 @@ function formatPvName(pv) {
 function createItem(items, index, item) {
     const mermaid = mermaidId(item.prefix, item.key);
     const labelText = item.label;
-    const searchText = [
-        item.kind,
-        labelText,
-        item.badgeText,
-        item.searchText,
-        item.key
-    ].filter(Boolean).join(' ').toLowerCase();
+    const searchText = [item.kind, labelText, item.badgeText, item.searchText, item.key].filter(Boolean).join(' ').toLowerCase();
     const node = {
-        ...item,
-        mermaid,
-        searchText
+        ...item, mermaid, searchText
     };
     items.push(node);
     index.set(item.key, node);
@@ -792,23 +779,7 @@ function summarizeSnapshot(data, options = {}) {
 
 function updateSidebar(data, options = {}) {
     const stats = summarizeSnapshot(data, options);
-    const cards = [
-        ['Regions', stats.regions],
-        ['Zones', stats.zones],
-        ['VMs', stats.vms],
-        ['Nodes', stats.nodes],
-        ['Pods', stats.pods],
-        ['Namespaces', stats.namespaces],
-        ['Privileged', stats.privilegedNamespaces],
-        ['StorageClasses', stats.storageClasses],
-        ['Default SCs', stats.defaultStorageClasses],
-        ['PVCs', stats.pvcs],
-        ['Bound PVCs', stats.boundPvcs],
-        ['PVs', stats.pvs],
-        ['Bound PVs', stats.boundPvs],
-        ['Disks', stats.disks],
-        ['Attached', stats.attachedDisks]
-    ];
+    const cards = [['Regions', stats.regions], ['Zones', stats.zones], ['VMs', stats.vms], ['Nodes', stats.nodes], ['Pods', stats.pods], ['Namespaces', stats.namespaces], ['Privileged', stats.privilegedNamespaces], ['StorageClasses', stats.storageClasses], ['Default SCs', stats.defaultStorageClasses], ['PVCs', stats.pvcs], ['Bound PVCs', stats.boundPvcs], ['PVs', stats.pvs], ['Bound PVs', stats.boundPvs], ['Disks', stats.disks], ['Attached', stats.attachedDisks]];
     if (summaryEl) {
         summaryEl.innerHTML = cards.map(([labelText, value]) => `
             <article class="summary-card">
