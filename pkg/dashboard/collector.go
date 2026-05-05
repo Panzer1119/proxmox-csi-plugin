@@ -11,6 +11,8 @@ import (
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/csi"
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/proxmoxpool"
 	volutil "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/volume"
+	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
@@ -103,11 +105,7 @@ func (c *Collector) collectNamespaces(ctx context.Context) []KubernetesNamespace
 
 	var result []KubernetesNamespace
 	for _, ns := range namespaces.Items {
-		isPrivileged := false
-		if _, ok := ns.Labels["pod-security.kubernetes.io/enforce"]; ok {
-			val := ns.Labels["pod-security.kubernetes.io/enforce"]
-			isPrivileged = val == "privileged"
-		}
+		isPrivileged := ns.Labels["pod-security.kubernetes.io/enforce"] == "privileged"
 
 		kns := KubernetesNamespace{
 			KubernetesBase: KubernetesBase{
@@ -137,20 +135,7 @@ func (c *Collector) collectStorageClasses(ctx context.Context) []KubernetesStora
 
 	var result []KubernetesStorageClass
 	for _, sc := range scs.Items {
-		isDefault := false
-		if val, ok := sc.Annotations["storageclass.kubernetes.io/is-default-class"]; ok {
-			isDefault = val == "true"
-		}
-
-		reclaimPolicy := "Delete"
-		if sc.ReclaimPolicy != nil {
-			reclaimPolicy = string(*sc.ReclaimPolicy)
-		}
-
-		volumeBindingMode := "Immediate"
-		if sc.VolumeBindingMode != nil {
-			volumeBindingMode = string(*sc.VolumeBindingMode)
-		}
+		isDefault := sc.Annotations["storageclass.kubernetes.io/is-default-class"] == "true"
 
 		ksc := KubernetesStorageClass{
 			KubernetesBase: KubernetesBase{
@@ -164,9 +149,9 @@ func (c *Collector) collectStorageClasses(ctx context.Context) []KubernetesStora
 				Labels:      sc.Labels,
 			},
 			Provisioner:          sc.Provisioner,
-			ReclaimPolicy:        reclaimPolicy,
-			AllowVolumeExpansion: *sc.AllowVolumeExpansion,
-			VolumeBindingMode:    volumeBindingMode,
+			ReclaimPolicy:        reclaimPolicyValue(sc.ReclaimPolicy),
+			AllowVolumeExpansion: boolValue(sc.AllowVolumeExpansion),
+			VolumeBindingMode:    volumeBindingModeValue(sc.VolumeBindingMode),
 			IsDefault:            isDefault,
 		}
 		result = append(result, ksc)
@@ -194,15 +179,7 @@ func (c *Collector) collectPersistentVolumes(ctx context.Context) []KubernetesPe
 			accessModes[i] = string(mode)
 		}
 
-		storageClassName := ""
-		if pv.Spec.StorageClassName != "" {
-			storageClassName = pv.Spec.StorageClassName
-		}
-
-		mode := "Filesystem"
-		if pv.Spec.VolumeMode != nil {
-			mode = string(*pv.Spec.VolumeMode)
-		}
+		mode := persistentVolumeModeValue(pv.Spec.VolumeMode)
 
 		var claimRef *KubernetesReference
 		if pv.Spec.ClaimRef != nil {
@@ -238,7 +215,7 @@ func (c *Collector) collectPersistentVolumes(ctx context.Context) []KubernetesPe
 				Annotations: pv.Annotations,
 				Labels:      pv.Labels,
 			},
-			StorageClassName: storageClassName,
+			StorageClassName: pv.Spec.StorageClassName,
 			Bound:            bound,
 			AccessMode:       accessModes,
 			Capacity:         pv.Spec.Capacity.Storage().String(),
@@ -284,10 +261,7 @@ func (c *Collector) collectPersistentVolumeClaims(ctx context.Context, storageCl
 			accessModes[i] = string(mode)
 		}
 
-		volumeMode := "Filesystem"
-		if pvc.Spec.VolumeMode != nil {
-			volumeMode = string(*pvc.Spec.VolumeMode)
-		}
+		volumeMode := persistentVolumeClaimModeValue(pvc.Spec.VolumeMode)
 
 		bound := pvc.Spec.VolumeName != ""
 
@@ -556,29 +530,7 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		diskName := pv.VolumeReference.Disk
 		// Ensure we have storage metadata (shared/nodes) from Proxmox. If not present,
 		// try to fetch it once using GetClusterStorage and cache it locally to avoid repeated API calls.
-		var meta proxmoxStorageMeta
-		var ok bool
-		if storageMeta[region] != nil {
-			meta, ok = storageMeta[region][storage]
-		}
-
-		if !ok {
-			// try to fetch and cache
-			if px, has := pxClientMap[region]; has && px != nil {
-				if storageConfig, err := px.GetClusterStorage(ctx, storage); err == nil {
-					if storageMeta[region] == nil {
-						storageMeta[region] = map[string]proxmoxStorageMeta{}
-					}
-					meta = proxmoxStorageMeta{
-						Shared: storageConfig.Shared == 1,
-						Nodes:  splitCSV(storageConfig.Nodes),
-					}
-					storageMeta[region][storage] = meta
-				} else {
-					klog.ErrorS(err, "failed to get proxmox storage config while building disk list", "region", region, "storage", storage)
-				}
-			}
-		}
+		meta, _ := c.getStorageMeta(ctx, storageMeta, pxClientMap[region], region, storage)
 		shared := meta.Shared
 		key := diskUsageKey(region, node, storage, diskName, shared)
 		usage := diskUsage[key]
@@ -684,22 +636,7 @@ func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersis
 				continue
 			}
 
-			meta, ok := storageMeta[region][vol.Storage()]
-			if !ok {
-				// attempt on-demand fetch using prefetched client
-				if px2, has := pxClientMap[region]; has && px2 != nil {
-					if storageConfig, err := px2.GetClusterStorage(ctx, vol.Storage()); err == nil {
-						if storageMeta[region] == nil {
-							storageMeta[region] = map[string]proxmoxStorageMeta{}
-						}
-						meta = proxmoxStorageMeta{
-							Shared: storageConfig.Shared == 1,
-							Nodes:  splitCSV(storageConfig.Nodes),
-						}
-						storageMeta[region][vol.Storage()] = meta
-					}
-				}
-			}
+			meta, _ := c.getStorageMeta(ctx, storageMeta, pxClientMap[region], region, vol.Storage())
 
 			key := diskUsageKey(region, vol.Node(), vol.Storage(), vol.Disk(), meta.Shared)
 			if _, ok := diskToVMs[key]; ok {
@@ -815,4 +752,70 @@ func splitCSV(value string) []string {
 		}
 	}
 	return result
+}
+
+func boolValue(value *bool) bool {
+	return value != nil && *value
+}
+
+func reclaimPolicyValue(value *corev1.PersistentVolumeReclaimPolicy) string {
+	if value == nil {
+		return "Delete"
+	}
+
+	return string(*value)
+}
+
+func volumeBindingModeValue(value *storagev1.VolumeBindingMode) string {
+	if value == nil {
+		return "Immediate"
+	}
+
+	return string(*value)
+}
+
+func persistentVolumeModeValue(value *corev1.PersistentVolumeMode) string {
+	if value == nil {
+		return "Filesystem"
+	}
+
+	return string(*value)
+}
+
+func persistentVolumeClaimModeValue(value *corev1.PersistentVolumeMode) string {
+	if value == nil {
+		return "Filesystem"
+	}
+
+	return string(*value)
+}
+
+func (c *Collector) getStorageMeta(ctx context.Context, storageMeta map[string]map[string]proxmoxStorageMeta, px *goproxmox.APIClient, region, storage string) (proxmoxStorageMeta, bool) {
+	if byStorage, ok := storageMeta[region]; ok {
+		if meta, found := byStorage[storage]; found {
+			return meta, true
+		}
+	}
+
+	if px == nil {
+		return proxmoxStorageMeta{}, false
+	}
+
+	storageConfig, err := px.GetClusterStorage(ctx, storage)
+	if err != nil {
+		klog.ErrorS(err, "failed to get proxmox storage config", "region", region, "storage", storage)
+		return proxmoxStorageMeta{}, false
+	}
+
+	meta := proxmoxStorageMeta{
+		Shared: storageConfig.Shared == 1,
+		Nodes:  splitCSV(storageConfig.Nodes),
+	}
+
+	if storageMeta[region] == nil {
+		storageMeta[region] = map[string]proxmoxStorageMeta{}
+	}
+	storageMeta[region][storage] = meta
+
+	return meta, true
 }
