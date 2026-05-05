@@ -698,11 +698,11 @@ function buildMermaid(data, iconLoaded) {
             continue;
         }
         if (edge.kind === 'attached' || edge.kind === 'hosts') {
-            lines.push(`${from.mermaid}:R -- L:${to.mermaid}`);
+            emitLine(`${from.mermaid}:R -- L:${to.mermaid}`);
         } else if (edge.kind === 'provisioned-by' || edge.kind === 'bound-to') {
-            lines.push(`${from.mermaid}:R -- L:${to.mermaid}`);
+            emitLine(`${from.mermaid}:R -- L:${to.mermaid}`);
         } else if (edge.kind === 'backed-by' || edge.kind === 'uses') {
-            lines.push(`${from.mermaid}:B -- T:${to.mermaid}`);
+            emitLine(`${from.mermaid}:B -- T:${to.mermaid}`);
         }
     }
 
