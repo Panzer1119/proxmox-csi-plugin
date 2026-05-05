@@ -23,6 +23,8 @@ import (
 type Collector struct {
 	kube    kubernetes.Interface
 	proxmox *proxmoxpool.ProxmoxPool
+	// includeMetadata controls whether to include annotations and labels in the response
+	includeMetadata bool
 }
 
 type proxmoxDiskUsage struct {
@@ -48,20 +50,44 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 func (c *Collector) collectKubernetes(ctx context.Context) Kubernetes {
 	k8s := Kubernetes{}
 
-	// Collect nodes
-	k8s.Nodes = c.collectKubernetesNodes(ctx)
-
-	// Collect namespaces
-	k8s.Namespaces = c.collectNamespaces(ctx)
-
 	// Collect storage classes
-	k8s.StorageClasses = c.collectStorageClasses(ctx)
+	k8s.StorageClasses = c.collectStorageClasses(ctx, nil)
 
-	// Collect persistent volumes
+	// Collect persistent volumes first to determine what's relevant
 	k8s.PersistentVolumes = c.collectPersistentVolumes(ctx)
 
-	// Collect persistent volume claims
+	// Collect persistent volume claims first to determine what's relevant
 	k8s.PersistentVolumeClaims = c.collectPersistentVolumeClaims(ctx, k8s.StorageClasses)
+
+	// Build sets of relevant resources based on PVs and PVCs
+	usedStorageClasses := make(map[string]bool)
+	usedNodeNames := make(map[string]bool)
+	relevantNamespaces := make(map[string]bool)
+
+	for _, pvc := range k8s.PersistentVolumeClaims {
+		if pvc.StorageClassName != "" {
+			usedStorageClasses[pvc.StorageClassName] = true
+		}
+		relevantNamespaces[pvc.Namespace] = true
+	}
+
+	for _, pv := range k8s.PersistentVolumes {
+		if pv.StorageClassName != "" {
+			usedStorageClasses[pv.StorageClassName] = true
+		}
+		if pv.VolumeReference != nil && pv.VolumeReference.Node != "" {
+			usedNodeNames[pv.VolumeReference.Node] = true
+		}
+	}
+
+	// Collect storage classes
+	k8s.StorageClasses = c.collectStorageClasses(ctx, usedStorageClasses)
+
+	// Collect namespaces
+	k8s.Namespaces = c.collectNamespaces(ctx, relevantNamespaces)
+
+	// Collect nodes
+	k8s.Nodes = c.collectKubernetesNodes(ctx, usedNodeNames)
 
 	// Collect pods
 	k8s.Pods = c.collectPods(ctx, k8s.PersistentVolumeClaims)
@@ -69,8 +95,12 @@ func (c *Collector) collectKubernetes(ctx context.Context) Kubernetes {
 	return k8s
 }
 
-// collectKubernetesNodes gathers Kubernetes nodes
-func (c *Collector) collectKubernetesNodes(ctx context.Context) []KubernetesNode {
+// collectKubernetesNodes gathers Kubernetes nodes that are actually used by our PVs/PVCs
+func (c *Collector) collectKubernetesNodes(ctx context.Context, usedNodeNames map[string]bool) []KubernetesNode {
+	if len(usedNodeNames) == 0 {
+		return nil
+	}
+
 	nodes, err := c.kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		klog.ErrorS(err, "failed to list nodes")
@@ -79,6 +109,11 @@ func (c *Collector) collectKubernetesNodes(ctx context.Context) []KubernetesNode
 
 	var result []KubernetesNode
 	for _, node := range nodes.Items {
+		// Only include nodes that are referenced by our PVs/PVCs
+		if !usedNodeNames[node.Name] {
+			continue
+		}
+
 		kn := KubernetesNode{
 			KubernetesBase: KubernetesBase{
 				KubernetesReference: KubernetesReference{
@@ -87,8 +122,8 @@ func (c *Collector) collectKubernetesNodes(ctx context.Context) []KubernetesNode
 					UID:  string(node.UID),
 				},
 				CreatedAt:   node.CreationTimestamp.Time,
-				Annotations: node.Annotations,
-				Labels:      node.Labels,
+				Annotations: c.getAnnotations(node.Annotations),
+				Labels:      c.getLabels(node.Labels),
 			},
 		}
 		result = append(result, kn)
@@ -96,8 +131,12 @@ func (c *Collector) collectKubernetesNodes(ctx context.Context) []KubernetesNode
 	return result
 }
 
-// collectNamespaces gathers Kubernetes namespaces
-func (c *Collector) collectNamespaces(ctx context.Context) []KubernetesNamespace {
+// collectNamespaces gathers Kubernetes namespaces that contain our plugin's PVCs
+func (c *Collector) collectNamespaces(ctx context.Context, relevantNamespaces map[string]bool) []KubernetesNamespace {
+	if len(relevantNamespaces) == 0 {
+		return nil
+	}
+
 	namespaces, err := c.kube.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		klog.ErrorS(err, "failed to list namespaces")
@@ -106,6 +145,11 @@ func (c *Collector) collectNamespaces(ctx context.Context) []KubernetesNamespace
 
 	var result []KubernetesNamespace
 	for _, ns := range namespaces.Items {
+		// Only include namespaces that contain our plugin's PVCs
+		if !relevantNamespaces[ns.Name] {
+			continue
+		}
+
 		isPrivileged := ns.Labels["pod-security.kubernetes.io/enforce"] == "privileged"
 
 		kns := KubernetesNamespace{
@@ -116,8 +160,8 @@ func (c *Collector) collectNamespaces(ctx context.Context) []KubernetesNamespace
 					UID:  string(ns.UID),
 				},
 				CreatedAt:   ns.CreationTimestamp.Time,
-				Annotations: ns.Annotations,
-				Labels:      ns.Labels,
+				Annotations: c.getAnnotations(ns.Annotations),
+				Labels:      c.getLabels(ns.Labels),
 			},
 			IsPrivileged: isPrivileged,
 		}
@@ -126,8 +170,8 @@ func (c *Collector) collectNamespaces(ctx context.Context) []KubernetesNamespace
 	return result
 }
 
-// collectStorageClasses gathers Kubernetes storage classes
-func (c *Collector) collectStorageClasses(ctx context.Context) []KubernetesStorageClass {
+// collectStorageClasses gathers Kubernetes storage classes used by our plugin
+func (c *Collector) collectStorageClasses(ctx context.Context, usedStorageClasses map[string]bool) []KubernetesStorageClass {
 	scs, err := c.kube.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		klog.ErrorS(err, "failed to list storage classes")
@@ -136,6 +180,11 @@ func (c *Collector) collectStorageClasses(ctx context.Context) []KubernetesStora
 
 	var result []KubernetesStorageClass
 	for _, sc := range scs.Items {
+		// Only include storage classes that are used by our PVCs or are our CSI driver
+		if !(usedStorageClasses == nil || usedStorageClasses[sc.Name]) && sc.Provisioner != csi.DriverName {
+			continue
+		}
+
 		isDefault := sc.Annotations["storageclass.kubernetes.io/is-default-class"] == "true"
 
 		ksc := KubernetesStorageClass{
@@ -146,8 +195,8 @@ func (c *Collector) collectStorageClasses(ctx context.Context) []KubernetesStora
 					UID:  string(sc.UID),
 				},
 				CreatedAt:   sc.CreationTimestamp.Time,
-				Annotations: sc.Annotations,
-				Labels:      sc.Labels,
+				Annotations: c.getAnnotations(sc.Annotations),
+				Labels:      c.getLabels(sc.Labels),
 			},
 			Provisioner:          sc.Provisioner,
 			ReclaimPolicy:        reclaimPolicyValue(sc.ReclaimPolicy),
@@ -213,8 +262,8 @@ func (c *Collector) collectPersistentVolumes(ctx context.Context) []KubernetesPe
 					UID:  string(pv.UID),
 				},
 				CreatedAt:   pv.CreationTimestamp.Time,
-				Annotations: pv.Annotations,
-				Labels:      pv.Labels,
+				Annotations: c.getAnnotations(pv.Annotations),
+				Labels:      c.getLabels(pv.Labels),
 			},
 			StorageClassName: pv.Spec.StorageClassName,
 			Bound:            bound,
@@ -275,8 +324,8 @@ func (c *Collector) collectPersistentVolumeClaims(ctx context.Context, storageCl
 					UID:       string(pvc.UID),
 				},
 				CreatedAt:   pvc.CreationTimestamp.Time,
-				Annotations: pvc.Annotations,
-				Labels:      pvc.Labels,
+				Annotations: c.getAnnotations(pvc.Annotations),
+				Labels:      c.getLabels(pvc.Labels),
 			},
 			StorageClassName: scName,
 			Bound:            bound,
@@ -333,8 +382,8 @@ func (c *Collector) collectPods(ctx context.Context, pvcs []KubernetesPersistent
 					UID:       string(pod.UID),
 				},
 				CreatedAt:   pod.CreationTimestamp.Time,
-				Annotations: pod.Annotations,
-				Labels:      pod.Labels,
+				Annotations: c.getAnnotations(pod.Annotations),
+				Labels:      c.getLabels(pod.Labels),
 			},
 			Hostname: pod.Spec.Hostname,
 			NodeName: pod.Spec.NodeName,
@@ -867,4 +916,20 @@ func (c *Collector) getStorageMeta(ctx context.Context, storageMeta map[string]m
 	storageMeta[region][storage] = meta
 
 	return meta, true
+}
+
+// getAnnotations returns annotations if includeMetadata is true, otherwise returns nil
+func (c *Collector) getAnnotations(annotations map[string]string) map[string]string {
+	if !c.includeMetadata {
+		return nil
+	}
+	return annotations
+}
+
+// getLabels returns labels if includeMetadata is true, otherwise returns nil
+func (c *Collector) getLabels(labels map[string]string) map[string]string {
+	if !c.includeMetadata {
+		return nil
+	}
+	return labels
 }
