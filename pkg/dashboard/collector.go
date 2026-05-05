@@ -555,15 +555,16 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		storage := pv.VolumeReference.Storage
 		diskName := pv.VolumeReference.Disk
 		// Ensure we have storage metadata (shared/nodes) from Proxmox. If not present,
-		// fetch it once using GetClusterStorage and cache it locally to avoid repeated API calls.
+		// try to fetch it once using GetClusterStorage and cache it locally to avoid repeated API calls.
 		var meta proxmoxStorageMeta
+		var ok bool
 		if storageMeta[region] != nil {
-			meta = storageMeta[region][storage]
+			meta, ok = storageMeta[region][storage]
 		}
 
-		if storageMeta[region] == nil || (meta == proxmoxStorageMeta{}) {
+		if !ok {
 			// try to fetch and cache
-			if px, ok := pxClientMap[region]; ok {
+			if px, has := pxClientMap[region]; has && px != nil {
 				if storageConfig, err := px.GetClusterStorage(ctx, storage); err == nil {
 					if storageMeta[region] == nil {
 						storageMeta[region] = map[string]proxmoxStorageMeta{}
@@ -660,10 +661,15 @@ func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersis
 			continue
 		}
 
-		px, err := c.proxmox.GetProxmoxCluster(region)
-		if err != nil {
-			klog.ErrorS(err, "failed to get proxmox cluster for disk analysis", "region", region)
-			continue
+		// prefer the prefetched API client, fall back to pool lookup
+		px := pxClientMap[region]
+		if px == nil {
+			var err error
+			px, err = c.proxmox.GetProxmoxCluster(region)
+			if err != nil {
+				klog.ErrorS(err, "failed to get proxmox cluster for disk analysis", "region", region)
+				continue
+			}
 		}
 
 		vmConfigCache := map[uint64]*goproxmox.VirtualMachine{}
@@ -678,7 +684,23 @@ func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersis
 				continue
 			}
 
-			meta := storageMeta[region][vol.Storage()]
+			meta, ok := storageMeta[region][vol.Storage()]
+			if !ok {
+				// attempt on-demand fetch using prefetched client
+				if px2, has := pxClientMap[region]; has && px2 != nil {
+					if storageConfig, err := px2.GetClusterStorage(ctx, vol.Storage()); err == nil {
+						if storageMeta[region] == nil {
+							storageMeta[region] = map[string]proxmoxStorageMeta{}
+						}
+						meta = proxmoxStorageMeta{
+							Shared: storageConfig.Shared == 1,
+							Nodes:  splitCSV(storageConfig.Nodes),
+						}
+						storageMeta[region][vol.Storage()] = meta
+					}
+				}
+			}
+
 			key := diskUsageKey(region, vol.Node(), vol.Storage(), vol.Disk(), meta.Shared)
 			if _, ok := diskToVMs[key]; ok {
 				continue
