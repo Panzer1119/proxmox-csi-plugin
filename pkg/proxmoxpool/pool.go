@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	proxmox "github.com/luthermonson/go-proxmox"
@@ -264,6 +265,59 @@ func (c *ProxmoxPool) FindVMByUUID(ctx context.Context, uuid string) (vmID int, 
 	}
 
 	return 0, "", ErrInstanceNotFound
+}
+
+// FindVMsByUUIDs find VMs by UUIDs in all Proxmox clusters.
+func (c *ProxmoxPool) FindVMsByUUIDs(ctx context.Context, uuids []string) (map[string][]struct {
+	rs *proxmox.ClusterResource
+	vm *proxmox.VirtualMachine
+}, error) {
+	vmsByRegion := make(map[string][]struct {
+		rs *proxmox.ClusterResource
+		vm *proxmox.VirtualMachine
+	})
+	for region, px := range c.clients {
+		vms := make([]struct {
+			rs *proxmox.ClusterResource
+			vm *proxmox.VirtualMachine
+		}, 0)
+		_, err := px.GetVMsByFilter(ctx, func(rs *proxmox.ClusterResource) (bool, error) {
+			if rs.Type != "qemu" {
+				return false, nil
+			}
+
+			vm, err := px.GetVMConfig(ctx, int(rs.VMID))
+			if err != nil {
+				return false, err
+			}
+
+			if slices.Contains(uuids, goproxmox.GetVMUUID(vm)) {
+				vms = append(vms, struct {
+					rs *proxmox.ClusterResource
+					vm *proxmox.VirtualMachine
+				}{
+					rs: rs,
+					vm: vm,
+				})
+				return true, nil
+			}
+
+			return false, nil
+		})
+		if err != nil {
+			if errors.Is(err, goproxmox.ErrVirtualMachineNotFound) {
+				continue
+			}
+
+			return nil, ErrInstanceNotFound
+		}
+		if len(vms) == 0 {
+			continue
+		}
+		vmsByRegion[region] = vms
+	}
+
+	return vmsByRegion, nil
 }
 
 func readValueFromFile(path string) (string, error) {
