@@ -404,10 +404,29 @@ func (c *Collector) Collect(ctx context.Context, store *Store) error {
 					shared = true
 				}
 			}
+
+			// check if disk already exists in the array (by StorageID and Name)
+			diskExists := false
 			if shared {
-				r.Disks = append(r.Disks, disk)
+				for _, existing := range r.Disks {
+					if existing.StorageID == disk.StorageID && existing.Name == disk.Name {
+						diskExists = true
+						break
+					}
+				}
+				if !diskExists {
+					r.Disks = append(r.Disks, disk)
+				}
 			} else {
-				z.Disks = append(z.Disks, disk)
+				for _, existing := range z.Disks {
+					if existing.StorageID == disk.StorageID && existing.Name == disk.Name {
+						diskExists = true
+						break
+					}
+				}
+				if !diskExists {
+					z.Disks = append(z.Disks, disk)
+				}
 			}
 			r.Zones[zoneName] = z
 		}
