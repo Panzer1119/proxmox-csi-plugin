@@ -774,7 +774,7 @@ if (diagramEl) {
     });
 }
 
-fetch('/dashboard/api/topology')
+fetch('/api/topology')
     .then(r => r.json())
     .then(setData)
     .catch(() => {
@@ -788,7 +788,7 @@ fetch('/dashboard/api/topology')
         }
     });
 
-const es = new EventSource('/dashboard/api/stream');
+const es = new EventSource('/api/stream');
 es.onmessage = (event) => setData(JSON.parse(event.data));
 es.onerror = () => {
     if (statusEl) {

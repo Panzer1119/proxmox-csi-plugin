@@ -164,6 +164,6 @@ metadata:
 | `--dashboard-refresh-interval` | Poll interval for Proxmox/Kubernetes topology data. | `15s` |
 
 Dashboard endpoints:
-- `/dashboard/` web UI
-- `/dashboard/api/topology` JSON snapshot
-- `/dashboard/api/stream` Server-Sent Events live updates
+- `/` web UI
+- `/api/topology` JSON snapshot
+- `/api/stream` Server-Sent Events live updates

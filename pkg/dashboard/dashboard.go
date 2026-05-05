@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,10 +56,17 @@ func New(cfg Config, kube kubernetes.Interface) (*Server, error) {
 	}
 	store := NewStore()
 	srv := &Server{cfg: cfg, kube: kube, proxmox: pool, store: store}
+	staticRoot, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("prepare dashboard static files: %w", err)
+	}
+	fileServer := http.FileServer(http.FS(staticRoot))
 	mux := http.NewServeMux()
-	mux.Handle("/dashboard/", http.StripPrefix("/dashboard", http.FileServer(http.FS(staticFS))))
-	mux.HandleFunc("/dashboard/api/topology", srv.handleTopology)
-	mux.HandleFunc("/dashboard/api/stream", srv.handleStream)
+	mux.HandleFunc("/dashboard", srv.redirectDashboard)
+	mux.HandleFunc("/dashboard/", srv.redirectDashboard)
+	mux.Handle("/", fileServer)
+	mux.HandleFunc("/api/topology", srv.handleTopology)
+	mux.HandleFunc("/api/stream", srv.handleStream)
 	srv.httpServer = &http.Server{Addr: cfg.BindAddress, Handler: mux}
 	return srv, nil
 }
@@ -94,6 +103,15 @@ func (s *Server) runCollector(ctx context.Context, collector *Collector) {
 		}
 	}
 }
+
+func (s *Server) redirectDashboard(w http.ResponseWriter, r *http.Request) {
+	target := strings.TrimPrefix(r.URL.Path, "/dashboard")
+	if target == "" {
+		target = "/"
+	}
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
 func (s *Server) handleTopology(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(s.store.Get())
