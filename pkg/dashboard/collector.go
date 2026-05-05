@@ -491,17 +491,20 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 	var sharedDisks []ProxmoxSharedDisk
 	var localDisks []ProxmoxLocalDisk
 
-	// Track which disks are used and attached to which VMs.
-	diskUsage := c.analyzeDiskUsage(ctx, k8s.PersistentVolumes, regionsNeeded, storageMeta)
+	// Pre-fetch resources per region so we only call the cluster API once per region.
+	resourcesByRegion := map[string][]goproxmox.ClusterResource{}
+	pxClientMap := map[string]*goproxmox.APIClient{}
 
 	for region := range regionsNeeded {
 		px, err := c.proxmox.GetProxmoxCluster(region)
 		if err != nil {
+			klog.ErrorS(err, "failed to get proxmox cluster", "region", region)
 			continue
 		}
 
 		cl, err := px.Cluster(ctx)
 		if err != nil {
+			klog.ErrorS(err, "failed to get cluster client", "region", region)
 			continue
 		}
 
@@ -510,6 +513,9 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 			klog.ErrorS(err, "failed to get cluster resources", "region", region)
 			continue
 		}
+
+		resourcesByRegion[region] = resources
+		pxClientMap[region] = px
 
 		wantedNodes := regionsNeeded[region]
 		// Collect nodes (VMs and LXCs) that are in zones we care about.
@@ -534,6 +540,10 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		}
 	}
 
+	// Track which disks are used and attached to which VMs. Pass the pre-fetched resources
+	// to avoid duplicate API calls to list cluster resources.
+	diskUsage := c.analyzeDiskUsage(ctx, k8s.PersistentVolumes, regionsNeeded, storageMeta, resourcesByRegion, pxClientMap)
+
 	// Analyze disks from volumes
 	for _, pv := range k8s.PersistentVolumes {
 		if pv.VolumeReference == nil {
@@ -544,7 +554,30 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 		node := pv.VolumeReference.Node
 		storage := pv.VolumeReference.Storage
 		diskName := pv.VolumeReference.Disk
-		meta := storageMeta[region][storage]
+		// Ensure we have storage metadata (shared/nodes) from Proxmox. If not present,
+		// fetch it once using GetClusterStorage and cache it locally to avoid repeated API calls.
+		var meta proxmoxStorageMeta
+		if storageMeta[region] != nil {
+			meta = storageMeta[region][storage]
+		}
+
+		if storageMeta[region] == nil || (meta == proxmoxStorageMeta{}) {
+			// try to fetch and cache
+			if px, ok := pxClientMap[region]; ok {
+				if storageConfig, err := px.GetClusterStorage(ctx, storage); err == nil {
+					if storageMeta[region] == nil {
+						storageMeta[region] = map[string]proxmoxStorageMeta{}
+					}
+					meta = proxmoxStorageMeta{
+						Shared: storageConfig.Shared == 1,
+						Nodes:  splitCSV(storageConfig.Nodes),
+					}
+					storageMeta[region][storage] = meta
+				} else {
+					klog.ErrorS(err, "failed to get proxmox storage config while building disk list", "region", region, "storage", storage)
+				}
+			}
+		}
 		shared := meta.Shared
 		key := diskUsageKey(region, node, storage, diskName, shared)
 		usage := diskUsage[key]
@@ -617,23 +650,19 @@ func (c *Collector) collectProxmoxResources(ctx context.Context, k8s Kubernetes,
 }
 
 // analyzeDiskUsage maps disks to the actual Proxmox VM IDs that have them attached.
-func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersistentVolume, regionsNeeded map[string]map[string]bool, storageMeta map[string]map[string]proxmoxStorageMeta) map[string]proxmoxDiskUsage {
+func (c *Collector) analyzeDiskUsage(ctx context.Context, pvs []KubernetesPersistentVolume, regionsNeeded map[string]map[string]bool, storageMeta map[string]map[string]proxmoxStorageMeta, resourcesByRegion map[string][]goproxmox.ClusterResource, pxClientMap map[string]*goproxmox.APIClient) map[string]proxmoxDiskUsage {
 	diskToVMs := make(map[string]proxmoxDiskUsage)
 
 	for region := range regionsNeeded {
+		resources, ok := resourcesByRegion[region]
+		if !ok {
+			// no resources prefetched for this region
+			continue
+		}
+
 		px, err := c.proxmox.GetProxmoxCluster(region)
 		if err != nil {
-			continue
-		}
-
-		cl, err := px.Cluster(ctx)
-		if err != nil {
-			continue
-		}
-
-		resources, err := cl.Resources(ctx, "vm")
-		if err != nil {
-			klog.ErrorS(err, "failed to get VM resources", "region", region)
+			klog.ErrorS(err, "failed to get proxmox cluster for disk analysis", "region", region)
 			continue
 		}
 
