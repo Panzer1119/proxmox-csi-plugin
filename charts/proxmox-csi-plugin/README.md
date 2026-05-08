@@ -81,6 +81,7 @@ storageClass:
     reclaimPolicy: Delete
     fstype: ext4
     cache: writethrough
+    volumeNameTemplate: '{{ .PVCNamespace }}-{{ .PVCName }}-{{ .PVName }}-{{ .RequestedName }}'
 ```
 
 ## Deploy

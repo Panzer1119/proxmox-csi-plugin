@@ -51,6 +51,9 @@ parameters:
   ## Optional: Prefix and suffix for the created disk name
   volumeNamePrefix: "my-prefix-"
   volumeNameSuffix: "-my-suffix"
+  ## Optional: Template used to derive the Proxmox volume name
+  ## Available fields: .VMID, .PVCNamespace, .PVCName, .PVName, .RequestedName
+  volumeNameTemplate: '{{ .PVCNamespace }}-{{ .PVCName }}-{{ .PVName }}-{{ .RequestedName }}'
 
 # Optional: This field allows you to specify additional mount options to be applied when the volume is mounted on the node
 mountOptions:
@@ -132,6 +135,7 @@ metadata:
 * `vmID` - optional VM ID for the created disk (default: `9999`)
 * `volumeNamePrefix` - optional prefix for the created disk (default: empty)
 * `volumeNameSuffix` - optional suffix for the created disk (default: empty)
+* `volumeNameTemplate` - template used to derive the Proxmox volume name. Available fields: `VMID`, `PVCNamespace`, `PVCName`, `PVName`, `RequestedName`. For replication and volume cleanup, keep the rendered name compatible with the `vm-<vmid>-...` pattern.
 
 ## AllowVolumeExpansion
 

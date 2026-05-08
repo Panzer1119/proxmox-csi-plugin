@@ -120,11 +120,6 @@ func (d *ControllerService) Init() {
 func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	klog.V(4).InfoS("CreateVolume: called", "args", protosanitizer.StripSecrets(request))
 
-	pvc, _ := resolveProvisionedVolumeName(request)
-	if len(pvc) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "VolumeName must be provided")
-	}
-
 	volCapabilities := request.GetVolumeCapabilities()
 	if volCapabilities == nil {
 		return nil, status.Error(codes.InvalidArgument, "VolumeCapabilities must be provided")
@@ -285,12 +280,17 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 		id = *params.VMID
 	}
 
+	volumeName, err := resolveProvisionedVolumeName(request, params, id)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	if params.Replicate {
 		if storageConfig.PluginType != "zfspool" {
 			return nil, status.Error(codes.Internal, "error: storage type is not zfs in replication mode")
 		}
 
-		id, err = prepareReplication(ctx, cl, zone, pvc)
+		id, err = prepareReplication(ctx, cl, zone, volumeName)
 		if err != nil {
 			klog.ErrorS(err, "CreateVolume: failed to prepare replication", "cluster", region, "zone", zone)
 
@@ -317,7 +317,11 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 		}
 	}
 
-	vol := volume.NewVolume(region, zone, params.StorageID, fmt.Sprintf("vm-%d-%s", id, pvc), format)
+	volumeName, err = resolveProvisionedVolumeName(request, params, id)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	vol := volume.NewVolume(region, zone, params.StorageID, fmt.Sprintf("vm-%d-%s", id, volumeName), format)
 
 	klog.V(5).InfoS("CreateVolume: creating volume", "cluster", region, "zone", zone, "volumeID", vol.VolumeID(), "size", volSizeBytes)
 

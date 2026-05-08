@@ -19,4 +19,7 @@ volumeNamePrefix: {{ . | quote }}
 {{- with .volumeNameSuffix }}
 volumeNameSuffix: {{ . | quote }}
 {{- end }}
+{{- with .volumeNameTemplate }}
+volumeNameTemplate: {{ . | quote }}
+{{- end }}
 {{- end }}

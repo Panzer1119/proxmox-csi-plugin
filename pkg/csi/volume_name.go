@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"text/template"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"k8s.io/klog/v2"
@@ -20,14 +21,35 @@ const (
 
 var invalidVolumeChars = regexp.MustCompile(`[^\w-.]+`)
 
+type volumeNameTemplateContext struct {
+	VMID          int
+	PVCNamespace  string
+	PVCName       string
+	PVName        string
+	RequestedName string
+}
+
 // resolveProvisionedVolumeName determines the final volume name for a CSI
 // CreateVolume request. It prefers PVC-derived names when available and
 // falls back to the provisioner-generated PV name otherwise.
-func resolveProvisionedVolumeName(req *csi.CreateVolumeRequest) (string, error) {
-	pvName := req.GetName()
-	klog.V(5).InfoS("resolveProvisionedVolumeName: provisioner PV name", "name", pvName)
+func resolveProvisionedVolumeName(req *csi.CreateVolumeRequest, storageParameters StorageParameters, vmID int) (string, error) {
+	requestedName := req.GetName()
+	klog.V(5).InfoS("resolveProvisionedVolumeName: provisioner persistent volume name", "requestedName", requestedName)
 
-	if rawName, ok := volumeNameFromParameters(req); ok {
+	requestParameters := req.GetParameters()
+	klog.V(5).InfoS("resolveProvisionedVolumeName: request parameters", "requestParameters", requestParameters)
+	klog.V(5).InfoS("resolveProvisionedVolumeName: storage parameters", "storageParameters", storageParameters)
+	klog.V(5).InfoS("resolveProvisionedVolumeName: vmID", "vmID", vmID)
+
+	prefix := strings.TrimSpace(storageParameters.VolumeNamePrefix)
+	suffix := strings.TrimSpace(storageParameters.VolumeNameSuffix)
+	klog.V(5).InfoS(
+		"resolveProvisionedVolumeName: name prefix/suffix",
+		"prefix", prefix,
+		"suffix", suffix,
+	)
+
+	if rawName, ok := volumeNameFromParameters(requestedName, requestParameters, &storageParameters, vmID); ok {
 		klog.V(5).InfoS("resolveProvisionedVolumeName: derived raw volume name", "name", rawName)
 
 		finalName, err := normalizeVolumeName(rawName)
@@ -36,44 +58,67 @@ func resolveProvisionedVolumeName(req *csi.CreateVolumeRequest) (string, error) 
 		}
 
 		klog.V(5).InfoS("resolveProvisionedVolumeName: final volume name", "name", finalName)
-		return finalName, nil
+		return prefix + finalName + suffix, nil
 	}
 
 	// Fallback to provisioner-generated PV name
-	return pvName, nil
+	return prefix + requestedName + suffix, nil
 }
 
-func volumeNameFromParameters(req *csi.CreateVolumeRequest) (string, bool) {
-	params := req.GetParameters()
-	if params == nil {
-		klog.V(5).InfoS("volumeNameFromParameters: no parameters provided")
+func volumeNameFromParameters(requestedName string, requestParameters map[string]string, storageParameters *StorageParameters, vmID int) (string, bool) {
+	if requestParameters == nil {
+		klog.V(5).InfoS("volumeNameFromParameters: no request parameters provided")
+		return "", false
+	}
+	if storageParameters == nil {
+		klog.V(5).InfoS("volumeNameFromParameters: no storage parameters provided")
 		return "", false
 	}
 
-	ns := strings.TrimSpace(params[pvcNamespaceParamKey])
-	pvc := strings.TrimSpace(params[pvcNameParamKey])
+	pvcNamespace := strings.TrimSpace(requestParameters[pvcNamespaceParamKey])
+	pvcName := strings.TrimSpace(requestParameters[pvcNameParamKey])
+	pvName := strings.TrimSpace(requestParameters[pvNameParamKey])
 	klog.V(5).InfoS(
-		"volumeNameFromParameters: pvc metadata",
-		"namespace", ns,
-		"pvcName", pvc,
+		"volumeNameFromParameters: pvc/pv metadata",
+		"pvcNamespace", pvcNamespace,
+		"pvcName", pvcName,
+		"pvName", pvName,
 	)
 
-	if ns == "" || pvc == "" {
+	if pvcNamespace == "" || pvcName == "" {
 		klog.V(5).InfoS("volumeNameFromParameters: missing PVC metadata")
 		return "", false
 	}
 
-	prefix := strings.TrimSpace(params["volumeNamePrefix"])
-	suffix := strings.TrimSpace(params["volumeNameSuffix"])
+	if templateText := strings.TrimSpace(storageParameters.VolumeNameTemplate); templateText != "" {
+		ctx := volumeNameTemplateContext{VMID: vmID, RequestedName: requestedName}
+		ctx.PVCNamespace = strings.TrimSpace(pvcNamespace)
+		ctx.PVCName = strings.TrimSpace(pvcName)
+		ctx.PVName = strings.TrimSpace(pvName)
+		klog.V(5).InfoS("volumeNameFromParameters: rendering volume name from template", "template", templateText, "context", ctx)
 
-	klog.V(5).InfoS(
-		"volumeNameFromParameters: name components",
-		"prefix", prefix,
-		"suffix", suffix,
-	)
+		rendered, err := renderVolumeNameTemplate(templateText, ctx)
+		if err == nil {
+			return rendered, true
+		}
+	}
 
 	// Namespace included to reduce cross-namespace collisions.
-	return fmt.Sprintf("%sns-%s--pvc-%s%s", prefix, ns, pvc, suffix), true
+	return fmt.Sprintf("ns-%s-pvc-%s", pvcNamespace, pvcName), true
+}
+
+func renderVolumeNameTemplate(templateText string, ctx volumeNameTemplateContext) (string, error) {
+	tpl, err := template.New("volume-name").Option("missingkey=error").Parse(templateText)
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	if err := tpl.Execute(&b, ctx); err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(b.String()), nil
 }
 
 func normalizeVolumeName(name string) (string, error) {

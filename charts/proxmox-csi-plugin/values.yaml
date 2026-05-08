@@ -83,6 +83,9 @@ storageClass: []
   #   # Prefix and suffix for the generated volume name. The generated name will be <prefix><generated-name><suffix>.
   #   volumeNamePrefix: "pvc-"
   #   volumeNameSuffix: ""
+  #   # Template used to derive the Proxmox volume name.
+  #   # Available fields: .VMID, .PVCNamespace, .PVCName, .PVName, .RequestedName
+  #   volumeNameTemplate: '{{ .PVCNamespace }}-{{ .PVCName }}-{{ .PVName }}-{{ .RequestedName }}'
   #
   #   extraParameters:
   #     # https://kubernetes-csi.github.io/docs/secrets-and-credentials-storage-class.html
