@@ -19,6 +19,9 @@ volumeNamePrefix: {{ . | quote }}
 {{- with .volumeNameSuffix }}
 volumeNameSuffix: {{ . | quote }}
 {{- end }}
+{{- with .volumeNameNamespaceUUID }}
+volumeNameNamespaceUUID: {{ . | quote }}
+{{- end }}
 {{- with .volumeNameTemplate }}
 volumeNameTemplate: {{ . | quote }}
 {{- end }}

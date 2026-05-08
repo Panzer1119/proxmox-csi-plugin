@@ -7,6 +7,7 @@ import (
 	"text/template"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/google/uuid"
 	"k8s.io/klog/v2"
 )
 
@@ -22,11 +23,12 @@ const (
 var invalidVolumeChars = regexp.MustCompile(`[^\w-.]+`)
 
 type volumeNameTemplateContext struct {
-	VMID          int
-	PVCNamespace  string
-	PVCName       string
-	PVName        string
-	RequestedName string
+	VMID           int
+	PVCNamespace   string
+	PVCName        string
+	PVName         string
+	RequestedName  string
+	VolumeNameUUID string
 }
 
 // resolveProvisionedVolumeName determines the final volume name for a CSI
@@ -49,7 +51,8 @@ func resolveProvisionedVolumeName(req *csi.CreateVolumeRequest, storageParameter
 		"suffix", suffix,
 	)
 
-	if rawName, ok := volumeNameFromParameters(requestedName, requestParameters, &storageParameters, vmID); ok {
+	rawName, ok, err := volumeNameFromParameters(requestedName, requestParameters, &storageParameters, vmID)
+	if err == nil && ok {
 		klog.V(5).InfoS("resolveProvisionedVolumeName: derived raw volume name", "name", rawName)
 
 		finalName, err := normalizeVolumeName(rawName)
@@ -65,14 +68,14 @@ func resolveProvisionedVolumeName(req *csi.CreateVolumeRequest, storageParameter
 	return prefix + requestedName + suffix, nil
 }
 
-func volumeNameFromParameters(requestedName string, requestParameters map[string]string, storageParameters *StorageParameters, vmID int) (string, bool) {
+func volumeNameFromParameters(requestedName string, requestParameters map[string]string, storageParameters *StorageParameters, vmID int) (string, bool, error) {
 	if requestParameters == nil {
 		klog.V(5).InfoS("volumeNameFromParameters: no request parameters provided")
-		return "", false
+		return "", false, nil
 	}
 	if storageParameters == nil {
 		klog.V(5).InfoS("volumeNameFromParameters: no storage parameters provided")
-		return "", false
+		return "", false, nil
 	}
 
 	pvcNamespace := strings.TrimSpace(requestParameters[pvcNamespaceParamKey])
@@ -87,24 +90,54 @@ func volumeNameFromParameters(requestedName string, requestParameters map[string
 
 	if pvcNamespace == "" || pvcName == "" {
 		klog.V(5).InfoS("volumeNameFromParameters: missing PVC metadata")
-		return "", false
+		return "", false, nil
+	}
+
+	volumeNameUUID, err := volumeNameUUIDFromParameters(pvcNamespace, pvcName, storageParameters.VolumeNameNamespaceUUID)
+	if err != nil {
+		return "", false, err
 	}
 
 	if templateText := strings.TrimSpace(storageParameters.VolumeNameTemplate); templateText != "" {
-		ctx := volumeNameTemplateContext{VMID: vmID, RequestedName: requestedName}
-		ctx.PVCNamespace = strings.TrimSpace(pvcNamespace)
-		ctx.PVCName = strings.TrimSpace(pvcName)
-		ctx.PVName = strings.TrimSpace(pvName)
+		ctx := volumeNameTemplateContext{
+			VMID:           vmID,
+			PVCNamespace:   pvcNamespace,
+			PVCName:        pvcName,
+			PVName:         pvName,
+			RequestedName:  requestedName,
+			VolumeNameUUID: volumeNameUUID,
+		}
 		klog.V(5).InfoS("volumeNameFromParameters: rendering volume name from template", "template", templateText, "context", ctx)
 
 		rendered, err := renderVolumeNameTemplate(templateText, ctx)
 		if err == nil {
-			return rendered, true
+			klog.V(5).InfoS("volumeNameFromParameters: rendered volume name from template", "name", rendered)
+			return rendered, true, nil
 		}
+		klog.ErrorS(err, "volumeNameFromParameters: failed to render volume name from template", "template", templateText, "context", ctx)
 	}
 
-	// Namespace included to reduce cross-namespace collisions.
-	return fmt.Sprintf("ns-%s-pvc-%s", pvcNamespace, pvcName), true
+	if volumeNameUUID != "" {
+		klog.V(5).InfoS("volumeNameFromParameters: using volume name derived from UUID", "name", volumeNameUUID)
+		return volumeNameUUID, true, nil
+	}
+
+	klog.V(5).InfoS("volumeNameFromParameters: using default PVC-based volume name")
+	return fmt.Sprintf("ns-%s-pvc-%s", pvcNamespace, pvcName), true, nil
+}
+
+func volumeNameUUIDFromParameters(pvcNamespace, pvcName, namespaceUUID string) (string, error) {
+	if strings.TrimSpace(namespaceUUID) == "" {
+		return "", nil
+	}
+
+	nsUUID, err := uuid.Parse(strings.TrimSpace(namespaceUUID))
+	if err != nil {
+		return "", fmt.Errorf("parameter namespace UUID is invalid: %w", err)
+	}
+
+	identity := fmt.Sprintf("%d:%s|%d:%s", len(pvcNamespace), pvcNamespace, len(pvcName), pvcName)
+	return uuid.NewSHA1(nsUUID, []byte(identity)).String(), nil
 }
 
 func renderVolumeNameTemplate(templateText string, ctx volumeNameTemplateContext) (string, error) {

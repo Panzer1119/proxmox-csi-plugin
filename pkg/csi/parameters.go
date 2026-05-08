@@ -78,10 +78,11 @@ type StorageParameters struct {
 	ResizeRequired  *bool `json:"resizeRequired,omitempty"`
 	ResizeSizeBytes int64 `json:"resizeSizeBytes,omitempty"`
 
-	VMID               *int   `json:"vmID,omitempty"`
-	VolumeNamePrefix   string `json:"volumeNamePrefix,omitempty"`
-	VolumeNameSuffix   string `json:"volumeNameSuffix,omitempty"`
-	VolumeNameTemplate string `json:"volumeNameTemplate,omitempty"`
+	VMID                    *int   `json:"vmID,omitempty"`
+	VolumeNamePrefix        string `json:"volumeNamePrefix,omitempty"`
+	VolumeNameSuffix        string `json:"volumeNameSuffix,omitempty"`
+	VolumeNameNamespaceUUID string `json:"volumeNameNamespaceUUID,omitempty"`
+	VolumeNameTemplate      string `json:"volumeNameTemplate,omitempty"`
 }
 
 // ModifyVolumeParameters contains parameters to modify a volume
