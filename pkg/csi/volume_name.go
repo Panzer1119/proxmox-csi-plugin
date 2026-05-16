@@ -14,9 +14,9 @@ import (
 const (
 	// Provided by external-provisioner when started with --extra-create-metadata
 	// https://kubernetes-csi.github.io/docs/external-provisioner.html#persistentvolumeclaim-and-persistentvolume-parameters
-	pvcNamespaceParamKey = "csi.storage.k8s.io/pvc/namespace"
-	pvcNameParamKey      = "csi.storage.k8s.io/pvc/name"
-	pvNameParamKey       = "csi.storage.k8s.io/pv/name"
+	PVCNamespaceParamKey = "csi.storage.k8s.io/pvc/namespace"
+	PVCNameParamKey      = "csi.storage.k8s.io/pvc/name"
+	PVNameParamKey       = "csi.storage.k8s.io/pv/name"
 	maxVolumeNameLength  = 128
 )
 
@@ -78,9 +78,9 @@ func volumeNameFromParameters(requestedName string, requestParameters map[string
 		return "", false, nil
 	}
 
-	pvcNamespace := strings.TrimSpace(requestParameters[pvcNamespaceParamKey])
-	pvcName := strings.TrimSpace(requestParameters[pvcNameParamKey])
-	pvName := strings.TrimSpace(requestParameters[pvNameParamKey])
+	pvcNamespace := strings.TrimSpace(requestParameters[PVCNamespaceParamKey])
+	pvcName := strings.TrimSpace(requestParameters[PVCNameParamKey])
+	pvName := strings.TrimSpace(requestParameters[PVNameParamKey])
 	klog.V(5).InfoS(
 		"volumeNameFromParameters: pvc/pv metadata",
 		"pvcNamespace", pvcNamespace,
