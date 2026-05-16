@@ -172,31 +172,32 @@ func buildSSHClientConfig(ctx context.Context, d *ControllerService, pxCfg *pxpo
 		return sshCfg, nil
 	}
 
-	sshCfg.User = pxCfg.SSHUser
+	cfg := *pxCfg
+	sshCfg.User = cfg.SSHUser
 	if sshCfg.User == "" {
 		sshCfg.User = "root"
 	}
-	sshCfg.Port = pxCfg.SSHPort
-	sshCfg.UseSudo = pxCfg.SSHUseSudo
+	sshCfg.Port = cfg.SSHPort
+	sshCfg.UseSudo = cfg.SSHUseSudo
 
-	if pxCfg.SSHPrivateKeySecretRef != nil {
-		val, err := resolveSecretString(ctx, d.kclient, pxCfg.SSHPrivateKeySecretRef)
+	if cfg.SSHPrivateKeySecretRef != nil {
+		val, err := resolveSecretString(ctx, d.kclient, cfg.SSHPrivateKeySecretRef)
 		if err != nil {
 			return sshclient.SSHClientConfig{}, err
 		}
 		sshCfg.PrivateKey = val
 	} else {
-		sshCfg.PrivateKeyFile = pxCfg.SSHPrivateKeyFile
+		sshCfg.PrivateKeyFile = cfg.SSHPrivateKeyFile
 	}
 
-	if pxCfg.SSHPasswordSecretRef != nil {
-		val, err := resolveSecretString(ctx, d.kclient, pxCfg.SSHPasswordSecretRef)
+	if cfg.SSHPasswordSecretRef != nil {
+		val, err := resolveSecretString(ctx, d.kclient, cfg.SSHPasswordSecretRef)
 		if err != nil {
 			return sshclient.SSHClientConfig{}, err
 		}
 		sshCfg.Password = val
 	} else {
-		sshCfg.PasswordFile = pxCfg.SSHPasswordFile
+		sshCfg.PasswordFile = cfg.SSHPasswordFile
 	}
 
 	return sshCfg, nil
@@ -263,7 +264,11 @@ func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxm
 		}
 	}
 
-	sshCfg, err := buildSSHClientConfig(ctx, d, pxCfg)
+	sshCfgInput := pxCfg
+	if sshCfgInput == nil {
+		sshCfgInput = &pxpool.ProxmoxCluster{}
+	}
+	sshCfg, err := buildSSHClientConfig(ctx, d, sshCfgInput)
 	if err != nil {
 		klog.ErrorS(err, "createSnapshotNative: failed to build ssh config")
 		return nil, status.Error(codes.Internal, err.Error())
@@ -409,7 +414,11 @@ func deleteSnapshotNative(ctx context.Context, d *ControllerService, snapshotID 
 		}
 	}
 
-	sshCfg, err := buildSSHClientConfig(ctx, d, pxCfg)
+	sshCfgInput := pxCfg
+	if sshCfgInput == nil {
+		sshCfgInput = &pxpool.ProxmoxCluster{}
+	}
+	sshCfg, err := buildSSHClientConfig(ctx, d, sshCfgInput)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -514,7 +523,11 @@ func listSnapshotsNative(ctx context.Context, d *ControllerService, cl *goproxmo
 		}
 	}
 
-	sshCfg, err := buildSSHClientConfig(ctx, d, pxCfg)
+	sshCfgInput := pxCfg
+	if sshCfgInput == nil {
+		sshCfgInput = &pxpool.ProxmoxCluster{}
+	}
+	sshCfg, err := buildSSHClientConfig(ctx, d, sshCfgInput)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -640,7 +653,11 @@ func createVolumeFromNativeSnapshot(ctx context.Context, d *ControllerService, c
 		}
 	}
 
-	sshCfg, err := buildSSHClientConfig(ctx, d, pxCfg)
+	sshCfgInput := pxCfg
+	if sshCfgInput == nil {
+		sshCfgInput = &pxpool.ProxmoxCluster{}
+	}
+	sshCfg, err := buildSSHClientConfig(ctx, d, sshCfgInput)
 	if err != nil {
 		return err
 	}
