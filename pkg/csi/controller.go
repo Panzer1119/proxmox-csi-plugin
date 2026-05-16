@@ -800,6 +800,26 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 		return nil, err
 	}
 
+	// If cluster has native ZFS snapshots enabled and class/params do not opt-out, use native path
+	pxCfg, _ := d.pxpool.GetProxmoxClusterConfig(vol.Cluster())
+	useNative := false
+	if pxCfg != nil && pxCfg.EnableZFSSnapshots {
+		if params["nativeZfs"] == "false" {
+			useNative = false
+		} else {
+			useNative = true
+		}
+	}
+	if useNative {
+		// call native implementation
+		resp, err := createSnapshotNative(ctx, d, cl, pxCfg, vol, name, params)
+		if err != nil {
+			klog.ErrorS(err, "CreateSnapshot: native snapshot failed", "cluster", vol.Cluster(), "volumeID", vol.VolumeID())
+			return nil, err
+		}
+		return resp, nil
+	}
+
 	snapshotID := vol.CopyVolume(fmt.Sprintf("vm-%d-%s", vmID, name))
 
 	if params["zone"] != "" {
@@ -870,6 +890,16 @@ func (d *ControllerService) DeleteSnapshot(ctx context.Context, request *csi.Del
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	// if cluster has native ZFS snapshots enabled, route to native delete
+	if pxCfg, _ := d.pxpool.GetProxmoxClusterConfig(vol.Cluster()); pxCfg != nil && pxCfg.EnableZFSSnapshots {
+		resp, err := deleteSnapshotNative(ctx, d, request.GetSnapshotId())
+		if err != nil {
+			klog.ErrorS(err, "DeleteSnapshot: native delete failed", "cluster", vol.Cluster(), "snapshotID", request.GetSnapshotId())
+			return nil, err
+		}
+		return resp, nil
+	}
+
 	_, err = d.checkVolume(ctx, vol)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
@@ -898,6 +928,21 @@ func (d *ControllerService) DeleteSnapshot(ctx context.Context, request *csi.Del
 // ListSnapshots list snapshots
 func (d *ControllerService) ListSnapshots(_ context.Context, request *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
 	klog.V(4).InfoS("ListSnapshots: called", "args", protosanitizer.StripSecrets(request))
+
+	// Try to route to native ZFS listing when possible
+	if request.GetSourceVolumeId() != "" {
+		vol, err := volume.NewVolumeFromVolumeID(request.GetSourceVolumeId())
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		cl, err := d.pxpool.GetProxmoxCluster(vol.Cluster())
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		if pxCfg, _ := d.pxpool.GetProxmoxClusterConfig(vol.Cluster()); pxCfg != nil && pxCfg.EnableZFSSnapshots {
+			return listSnapshotsNative(context.Background(), d, cl, pxCfg, vol.Storage())
+		}
+	}
 
 	return nil, status.Error(codes.Unimplemented, "")
 }
