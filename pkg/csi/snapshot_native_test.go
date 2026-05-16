@@ -42,7 +42,8 @@ func TestGenerateSnapshotNameUsesLengthPrefixedInput(t *testing.T) {
 }
 
 func TestComputeHoldTagUsesFullUUID(t *testing.T) {
-	tag := computeHoldTag("namespace", "snapshot-name")
+	// pass empty uuidNamespace to preserve legacy behavior (uses NameSpaceOID)
+	tag := computeHoldTag("", "namespace", "snapshot-name")
 	assert.True(t, len(tag) > len("pvecsi-"))
 	assert.Equal(t, 43, len(tag))
 	assert.Contains(t, tag, "-")

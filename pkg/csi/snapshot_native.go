@@ -68,7 +68,7 @@ func nativeUUID(namespace, name string) (uuid.UUID, error) {
 			return uuid.Nil, fmt.Errorf("invalid uuid namespace: %w", err)
 		}
 	} else {
-		ns = uuid.NameSpaceURL
+		ns = uuid.NameSpaceOID
 	}
 
 	return uuid.NewSHA1(ns, []byte(name)), nil
@@ -115,9 +115,12 @@ func generateSnapshotName(tmplStr, timestampFormat, uuidNamespace, namespace, na
 }
 
 // computeHoldTag creates a deterministic full-length hold tag from namespace/name.
-func computeHoldTag(namespace, name string) string {
-	u, err := nativeUUID(uuid.NameSpaceOID.String(), nativeUUIDInput(namespace, name))
+// It uses the same UUID namespace as snapshot name generation so hold tags are
+// consistent with snapshot UUIDs when a custom UUID namespace is configured.
+func computeHoldTag(uuidNamespace, namespace, name string) string {
+	u, err := nativeUUID(uuidNamespace, nativeUUIDInput(namespace, name))
 	if err != nil {
+		// fallback to sha1 when UUID namespace parsing fails
 		h := sha1.Sum([]byte(namespace + "/" + name))
 		return "pvecsi-" + hex.EncodeToString(h[:])
 	}
@@ -349,8 +352,8 @@ func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxm
 
 	holdTag := ""
 	if policy == "release" || policy == "release-destroy" {
-		// compute hold tag
-		holdTag = computeHoldTag(vsNamespace, vsName)
+		// compute hold tag using the same UUID namespace as snapshot names
+		holdTag = computeHoldTag(uuidNs, vsNamespace, vsName)
 		holdCmd := fmt.Sprintf("zfs hold %s '%s'", holdTag, fullSnap)
 		if _, stderr, err := client.Run(ctx, holdCmd); err != nil {
 			klog.ErrorS(err, "createSnapshotNative: zfs hold failed", "cmd", holdCmd, "stderr", stderr)
