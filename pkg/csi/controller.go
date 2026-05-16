@@ -157,6 +157,7 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 	}
 
 	var srcVol *volume.Volume
+	var nativeSnapshotID string
 
 	contentSource := request.GetVolumeContentSource()
 	if contentSource != nil {
@@ -168,9 +169,15 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 		}
 
 		if contentSource.GetSnapshot() != nil {
-			srcVol, err = volume.NewVolumeFromVolumeID(contentSource.GetSnapshot().GetSnapshotId())
-			if err != nil {
-				return nil, status.Error(codes.InvalidArgument, err.Error())
+			snapID := contentSource.GetSnapshot().GetSnapshotId()
+			// try parse as native snapshot id first
+			if _, perr := parseNativeSnapshotID(snapID); perr == nil {
+				nativeSnapshotID = snapID
+			} else {
+				srcVol, err = volume.NewVolumeFromVolumeID(snapID)
+				if err != nil {
+					return nil, status.Error(codes.InvalidArgument, err.Error())
+				}
 			}
 		}
 	}
@@ -335,7 +342,15 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 
 		mc := metrics.NewMetricContext("createVolume")
 
-		if srcVol != nil {
+		if nativeSnapshotID != "" {
+			klog.V(5).InfoS("CreateVolume: creating volume from native zfs snapshot", "volumeID", vol.VolumeID(), "snapshotID", nativeSnapshotID)
+
+			// attempt native clone
+			pxCfg, _ := d.pxpool.GetProxmoxClusterConfig(region)
+			if err = createVolumeFromNativeSnapshot(ctx, d, cl, pxCfg, nativeSnapshotID, vol); mc.ObserveRequest(err) != nil {
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+		} else if srcVol != nil {
 			size, err := getVolumeSize(ctx, cl, srcVol)
 			if err != nil {
 				if err.Error() != ErrorNotFound {
@@ -878,6 +893,15 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 func (d *ControllerService) DeleteSnapshot(ctx context.Context, request *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
 	klog.V(4).InfoS("DeleteSnapshot: called", "args", protosanitizer.StripSecrets(request))
 
+	if ref, perr := parseNativeSnapshotID(request.GetSnapshotId()); perr == nil {
+		resp, err := deleteSnapshotNative(ctx, d, request.GetSnapshotId())
+		if err != nil {
+			klog.ErrorS(err, "DeleteSnapshot: native delete failed", "cluster", ref.Region, "snapshotID", request.GetSnapshotId())
+			return nil, err
+		}
+		return resp, nil
+	}
+
 	vol, err := volume.NewVolumeFromVolumeID(request.GetSnapshotId())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -888,16 +912,6 @@ func (d *ControllerService) DeleteSnapshot(ctx context.Context, request *csi.Del
 		klog.ErrorS(err, "DeleteSnapshot: failed to get proxmox cluster", "cluster", vol.Cluster())
 
 		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	// if cluster has native ZFS snapshots enabled, route to native delete
-	if pxCfg, _ := d.pxpool.GetProxmoxClusterConfig(vol.Cluster()); pxCfg != nil && pxCfg.EnableZFSSnapshots {
-		resp, err := deleteSnapshotNative(ctx, d, request.GetSnapshotId())
-		if err != nil {
-			klog.ErrorS(err, "DeleteSnapshot: native delete failed", "cluster", vol.Cluster(), "snapshotID", request.GetSnapshotId())
-			return nil, err
-		}
-		return resp, nil
 	}
 
 	_, err = d.checkVolume(ctx, vol)
@@ -926,7 +940,7 @@ func (d *ControllerService) DeleteSnapshot(ctx context.Context, request *csi.Del
 }
 
 // ListSnapshots list snapshots
-func (d *ControllerService) ListSnapshots(_ context.Context, request *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
+func (d *ControllerService) ListSnapshots(ctx context.Context, request *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
 	klog.V(4).InfoS("ListSnapshots: called", "args", protosanitizer.StripSecrets(request))
 
 	// Try to route to native ZFS listing when possible
@@ -940,7 +954,7 @@ func (d *ControllerService) ListSnapshots(_ context.Context, request *csi.ListSn
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 		if pxCfg, _ := d.pxpool.GetProxmoxClusterConfig(vol.Cluster()); pxCfg != nil && pxCfg.EnableZFSSnapshots {
-			return listSnapshotsNative(context.Background(), d, cl, pxCfg, vol.Storage())
+			return listSnapshotsNative(ctx, d, cl, pxCfg, vol)
 		}
 	}
 

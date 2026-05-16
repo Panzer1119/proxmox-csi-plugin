@@ -49,11 +49,13 @@ type ProxmoxCluster struct {
 	EnableZFSSnapshots bool `yaml:"enable_zfs_snapshots,omitempty"`
 
 	// SSH settings used to connect to the Proxmox nodes when native ZFS snapshots are enabled
-	SSHUser           string `yaml:"ssh_user,omitempty"`
-	SSHPasswordFile   string `yaml:"ssh_password_file,omitempty"`
-	SSHPrivateKeyFile string `yaml:"ssh_private_key_file,omitempty"`
-	SSHPort           int    `yaml:"ssh_port,omitempty"`
-	SSHUseSudo        bool   `yaml:"ssh_use_sudo,omitempty"`
+	SSHUser                string        `yaml:"ssh_user,omitempty"`
+	SSHPasswordFile        string        `yaml:"ssh_password_file,omitempty"`
+	SSHPasswordSecretRef   *SecretKeyRef `yaml:"ssh_password_secret_ref,omitempty"`
+	SSHPrivateKeyFile      string        `yaml:"ssh_private_key_file,omitempty"`
+	SSHPrivateKeySecretRef *SecretKeyRef `yaml:"ssh_private_key_secret_ref,omitempty"`
+	SSHPort                int           `yaml:"ssh_port,omitempty"`
+	SSHUseSudo             bool          `yaml:"ssh_use_sudo,omitempty"`
 
 	// Optional explicit mapping of Proxmox node name to host/IP for SSH
 	NodeHostMap map[string]string `yaml:"node_host_map,omitempty"`
@@ -63,6 +65,13 @@ type ProxmoxCluster struct {
 
 	// Default timestamp format for snapshot name templates (Go time format)
 	DefaultTimestampFormat string `yaml:"timestamp_format,omitempty"`
+}
+
+// SecretKeyRef identifies a key inside a Kubernetes Secret.
+type SecretKeyRef struct {
+	Name      string `yaml:"name,omitempty"`
+	Namespace string `yaml:"namespace,omitempty"`
+	Key       string `yaml:"key,omitempty"`
 }
 
 // ProxmoxPool is a Proxmox client pool of proxmox clusters.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -14,7 +15,9 @@ import (
 type SSHClientConfig struct {
 	User           string
 	PasswordFile   string
+	Password       string
 	PrivateKeyFile string
+	PrivateKey     string
 	Port           int
 	UseSudo        bool
 }
@@ -29,10 +32,17 @@ type SSHClient struct {
 func NewSSHClient(host string, cfg SSHClientConfig) (*SSHClient, error) {
 	var authMethods []ssh.AuthMethod
 
-	if cfg.PrivateKeyFile != "" {
-		key, err := os.ReadFile(cfg.PrivateKeyFile)
-		if err != nil {
-			return nil, fmt.Errorf("read private key file: %w", err)
+	if cfg.PrivateKeyFile != "" || strings.TrimSpace(cfg.PrivateKey) != "" {
+		var key []byte
+		var err error
+		if cfg.PrivateKeyFile != "" {
+			k, err := os.ReadFile(cfg.PrivateKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("read private key file: %w", err)
+			}
+			key = k
+		} else {
+			key = []byte(cfg.PrivateKey)
 		}
 
 		signer, err := ssh.ParsePrivateKey(key)
@@ -41,13 +51,17 @@ func NewSSHClient(host string, cfg SSHClientConfig) (*SSHClient, error) {
 		}
 
 		authMethods = append(authMethods, ssh.PublicKeys(signer))
-	} else if cfg.PasswordFile != "" {
-		p, err := os.ReadFile(cfg.PasswordFile)
-		if err != nil {
-			return nil, fmt.Errorf("read password file: %w", err)
+	} else if cfg.PasswordFile != "" || cfg.Password != "" {
+		var password string
+		if cfg.PasswordFile != "" {
+			p, err := os.ReadFile(cfg.PasswordFile)
+			if err != nil {
+				return nil, fmt.Errorf("read password file: %w", err)
+			}
+			password = string(p)
+		} else {
+			password = cfg.Password
 		}
-
-		password := string(p)
 		authMethods = append(authMethods, ssh.Password(password))
 	} else {
 		// no auth provided
@@ -76,7 +90,7 @@ func NewSSHClient(host string, cfg SSHClientConfig) (*SSHClient, error) {
 }
 
 // Run runs a command on the remote host and returns stdout, stderr and error.
-func (s *SSHClient) Run(ctx context.Context, cmd string) (string, string, error) {
+func (s *SSHClient) Run(_ context.Context, cmd string) (string, string, error) {
 	session, err := s.client.NewSession()
 	if err != nil {
 		return "", "", err
