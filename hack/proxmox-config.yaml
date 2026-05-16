@@ -14,6 +14,7 @@ clusters:
     node_host_map:
       pve-node-1: 10.0.0.11
       pve-node-2: pve-node-2.example.com
+    uuid_namespace: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
   - url: https://cluster-api-2.example.com:8006/api2/json
     insecure: false
     token_id: "user!token-id"
