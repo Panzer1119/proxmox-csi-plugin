@@ -51,8 +51,8 @@ parameters:
   ## Optional: Prefix and suffix for the created disk name
   volumeNamePrefix: "my-prefix-"
   volumeNameSuffix: "-my-suffix"
-  ## Optional: UUID namespace for deterministic UUIDv5 volume names
-  volumeNameNamespaceUUID: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+  ## Optional: UUID namespace for deterministic UUIDv5 volume and snapshot names
+  namespaceUUID: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
   ## Optional: Template used to derive the Proxmox volume name
   ## Available fields: .VMID, .PVCNamespace, .PVCName, .PVName, .RequestedName, .VolumeNameUUID
   volumeNameTemplate: '{{ .PVCNamespace }}-{{ .PVCName }}-{{ .PVName }}-{{ .RequestedName }}-{{ .VolumeNameUUID }}'
@@ -137,7 +137,7 @@ metadata:
 * `vmID` - optional VM ID for the created disk (default: `9999`)
 * `volumeNamePrefix` - optional prefix for the created disk (default: empty)
 * `volumeNameSuffix` - optional suffix for the created disk (default: empty)
-* `volumeNameNamespaceUUID` - UUID namespace used to derive a deterministic UUIDv5 volume name from the PVC namespace/name pair.
+* `namespaceUUID` - UUID namespace used to derive deterministic UUIDv5 volume and snapshot names from the PVC namespace/name pair.
 * `volumeNameTemplate` - template used to derive the Proxmox volume name. Available fields: `VMID`, `PVCNamespace`, `PVCName`, `PVName`, `RequestedName`, `VolumeNameUUID`. For replication and volume cleanup, keep the rendered name compatible with the `vm-<vmid>-...` pattern.
 
 ## AllowVolumeExpansion

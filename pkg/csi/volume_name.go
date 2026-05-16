@@ -93,7 +93,7 @@ func volumeNameFromParameters(requestedName string, requestParameters map[string
 		return "", false, nil
 	}
 
-	volumeNameUUID, err := volumeNameUUIDFromParameters(pvcNamespace, pvcName, storageParameters.VolumeNameNamespaceUUID)
+	volumeNameUUID, err := volumeNameUUIDFromParameters(pvcNamespace, pvcName, storageParameters.NamespaceUUID)
 	if err != nil {
 		return "", false, err
 	}

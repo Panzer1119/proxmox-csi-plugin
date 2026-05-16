@@ -81,7 +81,7 @@ storageClass:
     reclaimPolicy: Delete
     fstype: ext4
     cache: writethrough
-    volumeNameNamespaceUUID: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+    namespaceUUID: "6ba7b810-9dad-11d1-80b4-00c04fd430c8" # used for volume and snapshot names
     volumeNameTemplate: '{{ .PVCNamespace }}-{{ .PVCName }}-{{ .PVName }}-{{ .RequestedName }}-{{ .VolumeNameUUID }}'
 ```
 

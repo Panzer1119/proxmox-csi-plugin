@@ -45,6 +45,9 @@ const (
 
 	// StorageInodeSizeKey the inode size when formatting a volume
 	StorageInodeSizeKey = "inodeSize"
+
+	// StorageNamespaceUUIDKey is the UUID namespace used for deterministic volume and snapshot names.
+	StorageNamespaceUUIDKey = "namespaceUUID"
 )
 
 // StorageParameters contains storage parameters
@@ -78,11 +81,11 @@ type StorageParameters struct {
 	ResizeRequired  *bool `json:"resizeRequired,omitempty"`
 	ResizeSizeBytes int64 `json:"resizeSizeBytes,omitempty"`
 
-	VMID                    *int   `json:"vmID,omitempty"`
-	VolumeNamePrefix        string `json:"volumeNamePrefix,omitempty"`
-	VolumeNameSuffix        string `json:"volumeNameSuffix,omitempty"`
-	VolumeNameNamespaceUUID string `json:"volumeNameNamespaceUUID,omitempty"`
-	VolumeNameTemplate      string `json:"volumeNameTemplate,omitempty"`
+	VMID               *int   `json:"vmID,omitempty"`
+	VolumeNamePrefix   string `json:"volumeNamePrefix,omitempty"`
+	VolumeNameSuffix   string `json:"volumeNameSuffix,omitempty"`
+	NamespaceUUID      string `json:"namespaceUUID,omitempty"`
+	VolumeNameTemplate string `json:"volumeNameTemplate,omitempty"`
 }
 
 // ModifyVolumeParameters contains parameters to modify a volume
