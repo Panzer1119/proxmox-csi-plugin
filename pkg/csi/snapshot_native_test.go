@@ -31,9 +31,9 @@ func TestNativeSnapshotIDRoundTripJSON(t *testing.T) {
 func TestGenerateSnapshotNameUsesLengthPrefixedInput(t *testing.T) {
 	tmpl := "{{ .UUID }}"
 
-	left, err := generateSnapshotName(tmpl, "", "ab", "c", "")
+	left, err := generateSnapshotName(tmpl, "", "", "ab", "c")
 	require.NoError(t, err)
-	right, err := generateSnapshotName(tmpl, "", "a", "bc", "")
+	right, err := generateSnapshotName(tmpl, "", "", "a", "bc")
 	require.NoError(t, err)
 
 	assert.NotEqual(t, left, right)

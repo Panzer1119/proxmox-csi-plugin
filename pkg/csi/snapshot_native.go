@@ -75,7 +75,7 @@ func nativeUUID(namespace, name string) (uuid.UUID, error) {
 }
 
 // generateSnapshotName renders the template with provided fields and returns the snapshot name.
-func generateSnapshotName(tmplStr, timestampFormat, namespace, name, uuidNamespace string) (string, error) {
+func generateSnapshotName(tmplStr, timestampFormat, uuidNamespace, namespace, name string) (string, error) {
 	if tmplStr == "" {
 		tmplStr = "vs-{{ .Timestamp }}-{{ .UUID }}"
 	}
@@ -329,7 +329,7 @@ func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxm
 		uuidNs = pxCfg.UUIDNamespace
 	}
 
-	snapName, err := generateSnapshotName(snapshotTemplate, timestampFormat, vsNamespace, vsName, uuidNs)
+	snapName, err := generateSnapshotName(snapshotTemplate, timestampFormat, uuidNs, vsNamespace, vsName)
 	if err != nil {
 		klog.ErrorS(err, "createSnapshotNative: failed to generate snapshot name")
 		return nil, status.Error(codes.InvalidArgument, err.Error())
