@@ -317,7 +317,7 @@ func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxm
 		vsName = params["vsName"]
 	}
 
-	uuidNs := strings.TrimSpace(params[StorageNamespaceUUIDKey])
+	uuidNs := strings.TrimSpace(params[StorageUUIDNamespaceKey])
 	if uuidNs == "" && pxCfg != nil {
 		uuidNs = pxCfg.UUIDNamespace
 	}

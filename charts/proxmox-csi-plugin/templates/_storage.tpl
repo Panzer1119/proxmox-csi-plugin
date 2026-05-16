@@ -13,14 +13,14 @@ ssd: {{ .ssd | quote }}
 {{- with .vmID }}
 vmID: {{ . | quote }}
 {{- end }}
+{{- with .uuidNamespace }}
+uuidNamespace: {{ . | quote }}
+{{- end }}
 {{- with .volumeNamePrefix }}
 volumeNamePrefix: {{ . | quote }}
 {{- end }}
 {{- with .volumeNameSuffix }}
 volumeNameSuffix: {{ . | quote }}
-{{- end }}
-{{- with .namespaceUUID }}
-namespaceUUID: {{ . | quote }}
 {{- end }}
 {{- with .volumeNameTemplate }}
 volumeNameTemplate: {{ . | quote }}

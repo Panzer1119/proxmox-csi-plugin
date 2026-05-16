@@ -93,7 +93,7 @@ func volumeNameFromParameters(requestedName string, requestParameters map[string
 		return "", false, nil
 	}
 
-	volumeNameUUID, err := volumeNameUUIDFromParameters(pvcNamespace, pvcName, storageParameters.NamespaceUUID)
+	volumeNameUUID, err := volumeNameUUIDFromParameters(pvcNamespace, pvcName, storageParameters.UUIDNamespace)
 	if err != nil {
 		return "", false, err
 	}
@@ -126,12 +126,12 @@ func volumeNameFromParameters(requestedName string, requestParameters map[string
 	return fmt.Sprintf("ns-%s-pvc-%s", pvcNamespace, pvcName), true, nil
 }
 
-func volumeNameUUIDFromParameters(pvcNamespace, pvcName, namespaceUUID string) (string, error) {
-	if strings.TrimSpace(namespaceUUID) == "" {
+func volumeNameUUIDFromParameters(pvcNamespace, pvcName, uuidNamespace string) (string, error) {
+	if strings.TrimSpace(uuidNamespace) == "" {
 		return "", nil
 	}
 
-	nsUUID, err := uuid.Parse(strings.TrimSpace(namespaceUUID))
+	nsUUID, err := uuid.Parse(strings.TrimSpace(uuidNamespace))
 	if err != nil {
 		return "", fmt.Errorf("parameter namespace UUID is invalid: %w", err)
 	}

@@ -786,19 +786,19 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 		params = map[string]string{}
 	}
 
-	// If namespaceUUID is not provided in the VolumeSnapshotClass parameters,
-	// try to fallback to the namespaceUUID used for the source volume's storage
+	// If uuidNamespace is not provided in the VolumeSnapshotClass parameters,
+	// try to fallback to the uuidNamespace used for the source volume's storage
 	// (stored on the PersistentVolume's CSI volume attributes), and finally to
 	// the cluster-wide configured UUID namespace.
-	if strings.TrimSpace(params[StorageNamespaceUUIDKey]) == "" && d.kclient != nil {
-		if ns, err := d.getPVVolumeAttribute(ctx, vol.VolumeID(), StorageNamespaceUUIDKey); err == nil && strings.TrimSpace(ns) != "" {
-			params[StorageNamespaceUUIDKey] = strings.TrimSpace(ns)
+	if strings.TrimSpace(params[StorageUUIDNamespaceKey]) == "" && d.kclient != nil {
+		if ns, err := d.getPVVolumeAttribute(ctx, vol.VolumeID(), StorageUUIDNamespaceKey); err == nil && strings.TrimSpace(ns) != "" {
+			params[StorageUUIDNamespaceKey] = strings.TrimSpace(ns)
 		}
 	}
 
-	if strings.TrimSpace(params[StorageNamespaceUUIDKey]) == "" {
+	if strings.TrimSpace(params[StorageUUIDNamespaceKey]) == "" {
 		if pxCfg, err := d.pxpool.GetProxmoxClusterConfig(vol.Cluster()); err == nil && pxCfg != nil && strings.TrimSpace(pxCfg.UUIDNamespace) != "" {
-			params[StorageNamespaceUUIDKey] = strings.TrimSpace(pxCfg.UUIDNamespace)
+			params[StorageUUIDNamespaceKey] = strings.TrimSpace(pxCfg.UUIDNamespace)
 		}
 	}
 
