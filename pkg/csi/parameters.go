@@ -48,6 +48,12 @@ const (
 
 	// StorageUUIDNamespaceKey is the UUID namespace used for deterministic volume and snapshot names.
 	StorageUUIDNamespaceKey = "uuidNamespace"
+
+	// Provided by external-snapshotter when started with --extra-create-metadata
+	// https://kubernetes-csi.github.io/docs/external-snapshotter.html#volumesnapshot-volumesnapshotcontent-volumegroupsnapshot-and-volumegroupsnapshotcontent-parameters
+	VSNameParamKey        = "csi.storage.k8s.io/volumesnapshot/name"
+	VSNamespaceParamKey   = "csi.storage.k8s.io/volumesnapshot/namespace"
+	VSContentNameParamKey = "csi.storage.k8s.io/volumesnapshotcontent/name"
 )
 
 // StorageParameters contains storage parameters

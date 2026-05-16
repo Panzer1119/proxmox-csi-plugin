@@ -311,10 +311,17 @@ func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxm
 		timestampFormat = pxCfg.DefaultTimestampFormat
 	}
 
-	vsNamespace := params["vsNamespace"]
-	vsName := reqName
-	if params["vsName"] != "" {
-		vsName = params["vsName"]
+	// Allow metadata injected by the external-snapshotter (--extra-create-metadata)
+	// as well as the internal vsNamespace/vsName keys. Prefer explicit params in
+	// the following order: internal vs* keys, then csi.storage.k8s.io/* keys,
+	// then request name.
+	vsNamespace := strings.TrimSpace(params[VSNamespaceParamKey])
+	vsName := strings.TrimSpace(params[VSNameParamKey])
+	if vsName == "" {
+		vsName = strings.TrimSpace(params[VSContentNameParamKey])
+	}
+	if vsName == "" {
+		vsName = reqName
 	}
 
 	uuidNs := strings.TrimSpace(params[StorageUUIDNamespaceKey])
