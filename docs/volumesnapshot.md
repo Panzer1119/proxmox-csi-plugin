@@ -47,6 +47,23 @@ parameters:
   # Optional. Disable native mode for this class even if the cluster enables it.
   nativeZfs: "true"
 
+  # Optional. Reuse the same deterministic UUID namespace as volume naming.
+  namespaceUUID: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+
+  # Notes on namespace resolution
+  # The UUID namespace used to derive deterministic UUIDv5 values for volume
+  # and snapshot names can be configured in multiple places. The driver chooses
+  # the namespace using the following precedence (highest-first):
+  # 1. The `namespaceUUID` parameter on the VolumeSnapshotClass (shown above).
+  # 2. The storage-level `namespaceUUID` parameter (e.g. in a StorageClass or
+  #    storage configuration used by the source volume).
+  # 3. The cluster-wide `namespaceUUID` configured in the driver's cluster
+  #    configuration (a global fallback).
+  #
+  # This lets you override the namespace for a specific snapshot class while
+  # retaining existing per-storage or global defaults when the parameter is
+  # omitted.
+
   # Native ZFS deletion policy:
   # - delete: destroy the ZFS snapshot when the Kubernetes VolumeSnapshot is deleted (default)
   # - release: only remove the hold tag

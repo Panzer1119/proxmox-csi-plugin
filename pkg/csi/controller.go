@@ -786,6 +786,22 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 		params = map[string]string{}
 	}
 
+	// If namespaceUUID is not provided in the VolumeSnapshotClass parameters,
+	// try to fallback to the namespaceUUID used for the source volume's storage
+	// (stored on the PersistentVolume's CSI volume attributes), and finally to
+	// the cluster-wide configured UUID namespace.
+	if strings.TrimSpace(params[StorageNamespaceUUIDKey]) == "" && d.kclient != nil {
+		if ns, err := d.getPVVolumeAttribute(ctx, vol.VolumeID(), StorageNamespaceUUIDKey); err == nil && strings.TrimSpace(ns) != "" {
+			params[StorageNamespaceUUIDKey] = strings.TrimSpace(ns)
+		}
+	}
+
+	if strings.TrimSpace(params[StorageNamespaceUUIDKey]) == "" {
+		if pxCfg, err := d.pxpool.GetProxmoxClusterConfig(vol.Cluster()); err == nil && pxCfg != nil && strings.TrimSpace(pxCfg.UUIDNamespace) != "" {
+			params[StorageNamespaceUUIDKey] = strings.TrimSpace(pxCfg.UUIDNamespace)
+		}
+	}
+
 	cl, err := d.pxpool.GetProxmoxCluster(vol.Cluster())
 	if err != nil {
 		klog.ErrorS(err, "CreateSnapshot: failed to get proxmox cluster", "cluster", vol.Cluster())
@@ -1125,6 +1141,30 @@ func (d *ControllerService) getVMIDbyNode(ctx context.Context, nodeName string) 
 	}
 
 	return id, "", nil
+}
+
+// getPVVolumeAttribute searches for a PersistentVolume with CSI volume handle
+// equal to volumeID and returns the requested CSI volume attribute value if present.
+func (d *ControllerService) getPVVolumeAttribute(ctx context.Context, volumeID, key string) (string, error) {
+	pvs, err := d.kclient.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", err
+	}
+
+	for _, pv := range pvs.Items {
+		if pv.Spec.CSI == nil {
+			continue
+		}
+		if pv.Spec.CSI.VolumeHandle != volumeID {
+			continue
+		}
+		if v, ok := pv.Spec.CSI.VolumeAttributes[key]; ok {
+			return strings.TrimSpace(v), nil
+		}
+		break
+	}
+
+	return "", nil
 }
 
 func (d *ControllerService) checkVolume(ctx context.Context, vol *volume.Volume) (int64, error) {
