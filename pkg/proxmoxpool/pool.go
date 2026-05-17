@@ -45,11 +45,52 @@ type ProxmoxCluster struct {
 	Username        string `yaml:"username,omitempty"`
 	Password        string `yaml:"password,omitempty"`
 	Region          string `yaml:"region,omitempty"`
+	// EnableZFSSnapshots enables the native ZFS snapshot mechanism for this cluster
+	EnableZFSSnapshots bool `yaml:"enable_zfs_snapshots,omitempty"`
+
+	// SSH settings used to connect to the Proxmox nodes when native ZFS snapshots are enabled
+	SSHUser                string        `yaml:"ssh_user,omitempty"`
+	SSHPasswordFile        string        `yaml:"ssh_password_file,omitempty"`
+	SSHPasswordSecretRef   *SecretKeyRef `yaml:"ssh_password_secret_ref,omitempty"`
+	SSHPrivateKeyFile      string        `yaml:"ssh_private_key_file,omitempty"`
+	SSHPrivateKeySecretRef *SecretKeyRef `yaml:"ssh_private_key_secret_ref,omitempty"`
+	SSHPort                int           `yaml:"ssh_port,omitempty"`
+	SSHUseSudo             bool          `yaml:"ssh_use_sudo,omitempty"`
+
+	// Optional per-node SSH overrides; fields fall back to the cluster-wide SSH settings when omitted.
+	NodeSSHOptions map[string]*SSHOptions `yaml:"node_ssh_options,omitempty"`
+
+	// Optional UUID namespace for deterministic UUIDv5 snapshot names
+	UUIDNamespace string `yaml:"uuid_namespace,omitempty"`
+
+	// Default timestamp format for snapshot name templates (Go time format)
+	DefaultTimestampFormat string `yaml:"timestamp_format,omitempty"`
+}
+
+// SSHOptions contains per-node SSH settings.
+type SSHOptions struct {
+	Host                   string        `yaml:"host,omitempty"`
+	SSHUser                string        `yaml:"ssh_user,omitempty"`
+	SSHPasswordFile        string        `yaml:"ssh_password_file,omitempty"`
+	SSHPasswordSecretRef   *SecretKeyRef `yaml:"ssh_password_secret_ref,omitempty"`
+	SSHPrivateKeyFile      string        `yaml:"ssh_private_key_file,omitempty"`
+	SSHPrivateKeySecretRef *SecretKeyRef `yaml:"ssh_private_key_secret_ref,omitempty"`
+	SSHPort                int           `yaml:"ssh_port,omitempty"`
+	SSHUseSudo             *bool         `yaml:"ssh_use_sudo,omitempty"`
+}
+
+// SecretKeyRef identifies a key inside a Kubernetes Secret.
+type SecretKeyRef struct {
+	Name      string `yaml:"name,omitempty"`
+	Namespace string `yaml:"namespace,omitempty"`
+	Key       string `yaml:"key,omitempty"`
 }
 
 // ProxmoxPool is a Proxmox client pool of proxmox clusters.
 type ProxmoxPool struct {
 	clients map[string]*goproxmox.APIClient
+	// keep original cluster configs for per-cluster settings (e.g., SSH)
+	clusters map[string]*ProxmoxCluster
 }
 
 // NewProxmoxPool creates a new Proxmox cluster client.
@@ -108,8 +149,14 @@ func NewProxmoxPool(config []*ProxmoxCluster, options ...proxmox.Option) (*Proxm
 			clients[cfg.Region] = pxClient
 		}
 
+		clustersMap := make(map[string]*ProxmoxCluster, clusters)
+		for _, cfg := range config {
+			clustersMap[cfg.Region] = cfg
+		}
+
 		return &ProxmoxPool{
-			clients: clients,
+			clients:  clients,
+			clusters: clustersMap,
 		}, nil
 	}
 
@@ -160,6 +207,19 @@ func (c *ProxmoxPool) CheckClusters(ctx context.Context) error {
 func (c *ProxmoxPool) GetProxmoxCluster(region string) (*goproxmox.APIClient, error) {
 	if c.clients[region] != nil {
 		return c.clients[region], nil
+	}
+
+	return nil, ErrRegionNotFound
+}
+
+// GetProxmoxClusterConfig returns the original ProxmoxCluster config for a region.
+func (c *ProxmoxPool) GetProxmoxClusterConfig(region string) (*ProxmoxCluster, error) {
+	if c.clusters == nil {
+		return nil, ErrRegionNotFound
+	}
+
+	if c.clusters[region] != nil {
+		return c.clusters[region], nil
 	}
 
 	return nil, ErrRegionNotFound

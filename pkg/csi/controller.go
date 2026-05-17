@@ -38,6 +38,7 @@ import (
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/metrics"
 	pxpool "github.com/sergelogvinov/proxmox-csi-plugin/pkg/proxmoxpool"
 	utilsnode "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/node"
+	snapshot "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/snapshot"
 	volume "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/volume"
 
 	corev1 "k8s.io/api/core/v1"
@@ -157,6 +158,7 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 	}
 
 	var srcVol *volume.Volume
+	var nativeSnapshotID string
 
 	contentSource := request.GetVolumeContentSource()
 	if contentSource != nil {
@@ -168,9 +170,15 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 		}
 
 		if contentSource.GetSnapshot() != nil {
-			srcVol, err = volume.NewVolumeFromVolumeID(contentSource.GetSnapshot().GetSnapshotId())
-			if err != nil {
-				return nil, status.Error(codes.InvalidArgument, err.Error())
+			snapID := contentSource.GetSnapshot().GetSnapshotId()
+			// try parse as native snapshot id first
+			if _, perr := snapshot.ParseNativeSnapshotID(snapID); perr == nil {
+				nativeSnapshotID = snapID
+			} else {
+				srcVol, err = volume.NewVolumeFromVolumeID(snapID)
+				if err != nil {
+					return nil, status.Error(codes.InvalidArgument, err.Error())
+				}
 			}
 		}
 	}
@@ -280,8 +288,14 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 		id = *params.VMID
 	}
 
-	volumeName, err := resolveProvisionedVolumeName(request, params, id)
+	volumeName, err := volume.ResolveProvisionedVolumeName(request.GetName(), request.GetParameters(), volume.NameOptions{
+		Prefix:        params.VolumeNamePrefix,
+		Suffix:        params.VolumeNameSuffix,
+		Template:      params.VolumeNameTemplate,
+		UUIDNamespace: params.UUIDNamespace,
+	}, id)
 	if err != nil {
+		klog.ErrorS(err, "CreateVolume: failed to generate snapshot name")
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
@@ -317,7 +331,12 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 		}
 	}
 
-	volumeName, err = resolveProvisionedVolumeName(request, params, id)
+	volumeName, err = volume.ResolveProvisionedVolumeName(request.GetName(), request.GetParameters(), volume.NameOptions{
+		Prefix:        params.VolumeNamePrefix,
+		Suffix:        params.VolumeNameSuffix,
+		Template:      params.VolumeNameTemplate,
+		UUIDNamespace: params.UUIDNamespace,
+	}, id)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -335,7 +354,15 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 
 		mc := metrics.NewMetricContext("createVolume")
 
-		if srcVol != nil {
+		if nativeSnapshotID != "" {
+			klog.V(5).InfoS("CreateVolume: creating volume from native zfs snapshot", "volumeID", vol.VolumeID(), "snapshotID", nativeSnapshotID)
+
+			// attempt native clone
+			pxCfg, _ := d.pxpool.GetProxmoxClusterConfig(region)
+			if err = createVolumeFromNativeSnapshot(ctx, d, cl, pxCfg, nativeSnapshotID, vol); mc.ObserveRequest(err) != nil {
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+		} else if srcVol != nil {
 			size, err := getVolumeSize(ctx, cl, srcVol)
 			if err != nil {
 				if err.Error() != ErrorNotFound {
@@ -766,9 +793,9 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 		return nil, status.Error(codes.InvalidArgument, "Name must be provided")
 	}
 
-	params := request.GetParameters()
-	if params == nil {
-		params = map[string]string{}
+	params, err := ExtractVolumeSnapshotParameters(request.GetParameters())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	cl, err := d.pxpool.GetProxmoxCluster(vol.Cluster())
@@ -800,20 +827,36 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 		return nil, err
 	}
 
+	// If cluster has native ZFS snapshots enabled and class/params do not opt-out, use native path
+	pxCfg, _ := d.pxpool.GetProxmoxClusterConfig(vol.Cluster())
+	useNative := false
+	if pxCfg != nil && pxCfg.EnableZFSSnapshots {
+		useNative = *params.NativeZFS
+	}
+	if useNative {
+		// call native implementation
+		resp, err := CreateSnapshotNative(ctx, request, d, cl, pxCfg, vol)
+		if err != nil {
+			klog.ErrorS(err, "CreateSnapshot: native snapshot failed", "cluster", vol.Cluster(), "volumeID", vol.VolumeID())
+			return nil, err
+		}
+		return resp, nil
+	}
+
 	snapshotID := vol.CopyVolume(fmt.Sprintf("vm-%d-%s", vmID, name))
 
-	if params["zone"] != "" {
+	if params.Zone != "" {
 		if storageConfig.Nodes != "" {
 			nodes := strings.Split(storageConfig.Nodes, ",")
-			if !slices.Contains(nodes, params["zone"]) {
+			if !slices.Contains(nodes, params.Zone) {
 				err = status.Error(codes.InvalidArgument, "zone specified in parameters is not valid for the storage")
-				klog.ErrorS(err, "CreateSnapshot: invalid zone in parameters", "cluster", vol.Cluster(), "storageID", vol.Storage(), "zone", params["zone"])
+				klog.ErrorS(err, "CreateSnapshot: invalid zone in parameters", "cluster", vol.Cluster(), "storageID", vol.Storage(), "zone", params.Zone)
 
 				return nil, err
 			}
 		}
 
-		snapshotID.SetZone(params["zone"])
+		snapshotID.SetZone(params.Zone)
 	}
 
 	klog.V(5).InfoS("CreateSnapshot", "storageConfig", storageConfig, "snapshotID", snapshotID.VolumeID(), "params", params)
@@ -858,6 +901,15 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 func (d *ControllerService) DeleteSnapshot(ctx context.Context, request *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
 	klog.V(4).InfoS("DeleteSnapshot: called", "args", protosanitizer.StripSecrets(request))
 
+	if ref, perr := snapshot.ParseNativeSnapshotID(request.GetSnapshotId()); perr == nil {
+		resp, err := deleteSnapshotNative(ctx, d, request.GetSnapshotId())
+		if err != nil {
+			klog.ErrorS(err, "DeleteSnapshot: native delete failed", "cluster", ref.Region, "snapshotID", request.GetSnapshotId())
+			return nil, err
+		}
+		return resp, nil
+	}
+
 	vol, err := volume.NewVolumeFromVolumeID(request.GetSnapshotId())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -896,8 +948,23 @@ func (d *ControllerService) DeleteSnapshot(ctx context.Context, request *csi.Del
 }
 
 // ListSnapshots list snapshots
-func (d *ControllerService) ListSnapshots(_ context.Context, request *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
+func (d *ControllerService) ListSnapshots(ctx context.Context, request *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
 	klog.V(4).InfoS("ListSnapshots: called", "args", protosanitizer.StripSecrets(request))
+
+	// Try to route to native ZFS listing when possible
+	if request.GetSourceVolumeId() != "" {
+		vol, err := volume.NewVolumeFromVolumeID(request.GetSourceVolumeId())
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		cl, err := d.pxpool.GetProxmoxCluster(vol.Cluster())
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		if pxCfg, _ := d.pxpool.GetProxmoxClusterConfig(vol.Cluster()); pxCfg != nil && pxCfg.EnableZFSSnapshots {
+			return listSnapshotsNative(ctx, d, cl, pxCfg, vol)
+		}
+	}
 
 	return nil, status.Error(codes.Unimplemented, "")
 }
@@ -1066,6 +1133,30 @@ func (d *ControllerService) getVMIDbyNode(ctx context.Context, nodeName string) 
 	}
 
 	return id, "", nil
+}
+
+// getPVVolumeAttribute searches for a PersistentVolume with CSI volume handle
+// equal to volumeID and returns the requested CSI volume attribute value if present.
+func (d *ControllerService) getPVVolumeAttribute(ctx context.Context, volumeID, key string) (string, error) {
+	pvs, err := d.kclient.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", err
+	}
+
+	for _, pv := range pvs.Items {
+		if pv.Spec.CSI == nil {
+			continue
+		}
+		if pv.Spec.CSI.VolumeHandle != volumeID {
+			continue
+		}
+		if v, ok := pv.Spec.CSI.VolumeAttributes[key]; ok {
+			return strings.TrimSpace(v), nil
+		}
+		break
+	}
+
+	return "", nil
 }
 
 func (d *ControllerService) checkVolume(ctx context.Context, vol *volume.Volume) (int64, error) {

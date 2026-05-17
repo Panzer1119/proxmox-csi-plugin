@@ -83,8 +83,8 @@ storageClass: []
   #   # Prefix and suffix for the generated volume name. The generated name will be <prefix><generated-name><suffix>.
   #   volumeNamePrefix: "pvc-"
   #   volumeNameSuffix: ""
-  #   # Optional UUID namespace used to generate a deterministic UUIDv5 volume name.
-  #   volumeNameNamespaceUUID: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+  #   # Optional UUID namespace used to generate deterministic UUIDv5 volume and snapshot names.
+  #   uuidNamespace: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
   #   # Template used to derive the Proxmox volume name.
   #   # Available fields: .VMID, .PVCNamespace, .PVCName, .PVName, .RequestedName, .VolumeNameUUID
   #   volumeNameTemplate: '{{ .PVCNamespace }}-{{ .PVCName }}-{{ .PVName }}-{{ .RequestedName }}-{{ .VolumeNameUUID }}'
@@ -196,7 +196,9 @@ controller:
       tag: v8.3.0
     # -- Snapshotter arguments.
     # example: --feature-gates=CSIVolumeGroupSnapshot=true
-    args: []
+    args:
+      - --enable-volume-group-snapshots
+      - --extra-create-metadata
     # -- Snapshotter resource requests and limits.
     # ref: https://kubernetes.io/docs/user-guide/compute-resources/
     resources:

@@ -45,6 +45,9 @@ const (
 
 	// StorageInodeSizeKey the inode size when formatting a volume
 	StorageInodeSizeKey = "inodeSize"
+
+	// StorageUUIDNamespaceKey is the UUID namespace used for deterministic volume and snapshot names.
+	StorageUUIDNamespaceKey = "uuidNamespace"
 )
 
 // StorageParameters contains storage parameters
@@ -78,11 +81,11 @@ type StorageParameters struct {
 	ResizeRequired  *bool `json:"resizeRequired,omitempty"`
 	ResizeSizeBytes int64 `json:"resizeSizeBytes,omitempty"`
 
-	VMID                    *int   `json:"vmID,omitempty"`
-	VolumeNamePrefix        string `json:"volumeNamePrefix,omitempty"`
-	VolumeNameSuffix        string `json:"volumeNameSuffix,omitempty"`
-	VolumeNameNamespaceUUID string `json:"volumeNameNamespaceUUID,omitempty"`
-	VolumeNameTemplate      string `json:"volumeNameTemplate,omitempty"`
+	VMID               *int   `json:"vmID,omitempty"`
+	UUIDNamespace      string `json:"uuidNamespace,omitempty"`
+	VolumeNamePrefix   string `json:"volumeNamePrefix,omitempty"`
+	VolumeNameSuffix   string `json:"volumeNameSuffix,omitempty"`
+	VolumeNameTemplate string `json:"volumeNameTemplate,omitempty"`
 }
 
 // ModifyVolumeParameters contains parameters to modify a volume
@@ -99,6 +102,22 @@ type ModifyVolumeParameters struct {
 	SpeedMbps      *int  `json:"diskMBps,omitempty"`
 
 	ReplicateSchedule string `json:"replicateSchedule,omitempty"`
+}
+
+// VolumeSnapshotParameters contains volume snapshot parameters
+//
+// json - tags are used to map the struct to the Kubernetes resource
+// cfg  - tags are used to map the struct to the Proxmox API
+type VolumeSnapshotParameters struct {
+	Zone                    string `json:"zone,omitempty"`
+	NativeZFS               *bool  `json:"nativeZfs,omitempty"`
+	ZFSSnapshotDeletePolicy string `json:"zfsSnapshotDeletePolicy,omitempty"`
+
+	UUIDNamespace               string `json:"uuidNamespace,omitempty"`
+	SnapshotNamePrefix          string `json:"snapshotNamePrefix,omitempty"`
+	SnapshotNameSuffix          string `json:"snapshotNameSuffix,omitempty"`
+	SnapshotNameTemplate        string `json:"snapshotNameTemplate,omitempty"`
+	SnapshotNameTimestampFormat string `json:"snapshotNameTimestampFormat,omitempty"`
 }
 
 // ExtractParameters extracts storage parameters from a map and sets default values.
@@ -164,6 +183,24 @@ func ExtractModifyVolumeParameters(parameters map[string]string) (ModifyVolumePa
 	if p.SpeedMbps != nil && *p.SpeedMbps > 0 {
 		p.ReadSpeedMbps = ptr.Ptr(*p.SpeedMbps)
 		p.WriteSpeedMbps = ptr.Ptr(*p.SpeedMbps)
+	}
+
+	return p, nil
+}
+
+// ExtractVolumeSnapshotParameters extracts volume snapshot parameters from a map and sets default values.
+func ExtractVolumeSnapshotParameters(parameters map[string]string) (VolumeSnapshotParameters, error) {
+	p := VolumeSnapshotParameters{
+		NativeZFS: ptr.Ptr(false),
+	}
+
+	err := unmarshalTag(parameters, &p, "json")
+	if err != nil {
+		return p, err
+	}
+
+	if p.ZFSSnapshotDeletePolicy == "" {
+		p.ZFSSnapshotDeletePolicy = "Delete"
 	}
 
 	return p, nil

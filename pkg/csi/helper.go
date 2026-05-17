@@ -17,6 +17,7 @@ limitations under the License.
 package csi
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -28,7 +29,11 @@ import (
 	"time"
 
 	proto "github.com/container-storage-interface/spec/lib/go/csi"
+	pxpool "github.com/sergelogvinov/proxmox-csi-plugin/pkg/proxmoxpool"
+	sshclient "github.com/sergelogvinov/proxmox-csi-plugin/pkg/ssh"
 	"github.com/siderolabs/go-retry/retry"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/provider"
 
@@ -257,4 +262,121 @@ func RoundUpSizeBytes(volumeSizeBytes int64, allocationUnitBytes int64) int64 {
 	}
 
 	return allocationUnitBytes * ((volumeSizeBytes + allocationUnitBytes - 1) / allocationUnitBytes)
+}
+
+func ResolveSecretSSHString(ctx context.Context, kclient kubernetes.Interface, ref *pxpool.SecretKeyRef) (string, error) {
+	if ref == nil || ref.Name == "" {
+		return "", nil
+	}
+	if kclient == nil {
+		return "", fmt.Errorf("kubernetes client is required to resolve secret reference %s", ref.Name)
+	}
+
+	namespace := ref.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	if len(secret.Data) == 0 {
+		return "", fmt.Errorf("secret %s/%s has no data", namespace, ref.Name)
+	}
+
+	if ref.Key != "" {
+		if val, ok := secret.Data[ref.Key]; ok {
+			return strings.TrimSpace(string(val)), nil
+		}
+		return "", fmt.Errorf("secret %s/%s does not contain key %q", namespace, ref.Name, ref.Key)
+	}
+
+	if val, ok := secret.Data["ssh-privatekey"]; ok {
+		return strings.TrimSpace(string(val)), nil
+	}
+	if val, ok := secret.Data["password"]; ok {
+		return strings.TrimSpace(string(val)), nil
+	}
+	for _, val := range secret.Data {
+		return strings.TrimSpace(string(val)), nil
+	}
+
+	return "", fmt.Errorf("secret %s/%s does not contain usable data", namespace, ref.Name)
+}
+
+func buildSSHClientConfig(ctx context.Context, d *ControllerService, pxCfg *pxpool.ProxmoxCluster, node string) (string, sshclient.SSHClientConfig, error) {
+	if pxCfg == nil {
+		return node, sshclient.SSHClientConfig{}, fmt.Errorf("proxmox cluster config is required")
+	}
+
+	sshCfg := sshclient.SSHClientConfig{
+		User:    pxCfg.SSHUser,
+		Port:    pxCfg.SSHPort,
+		UseSudo: pxCfg.SSHUseSudo,
+	}
+	if sshCfg.User == "" {
+		sshCfg.User = "root"
+	}
+
+	host := node
+	if nodeCfg := pxCfg.NodeSSHOptions[node]; nodeCfg != nil {
+		if nodeCfg.Host != "" {
+			host = nodeCfg.Host
+		}
+		if nodeCfg.SSHUser != "" {
+			sshCfg.User = nodeCfg.SSHUser
+		}
+		if nodeCfg.SSHPort != 0 {
+			sshCfg.Port = nodeCfg.SSHPort
+		}
+		if nodeCfg.SSHUseSudo != nil {
+			sshCfg.UseSudo = *nodeCfg.SSHUseSudo
+		}
+		if nodeCfg.SSHPrivateKeySecretRef != nil {
+			val, err := ResolveSecretSSHString(ctx, d.kclient, nodeCfg.SSHPrivateKeySecretRef)
+			if err != nil {
+				return "", sshclient.SSHClientConfig{}, err
+			}
+			sshCfg.PrivateKey = val
+		} else if nodeCfg.SSHPrivateKeyFile != "" {
+			sshCfg.PrivateKeyFile = nodeCfg.SSHPrivateKeyFile
+		}
+
+		if nodeCfg.SSHPasswordSecretRef != nil {
+			val, err := ResolveSecretSSHString(ctx, d.kclient, nodeCfg.SSHPasswordSecretRef)
+			if err != nil {
+				return "", sshclient.SSHClientConfig{}, err
+			}
+			sshCfg.Password = val
+		} else if nodeCfg.SSHPasswordFile != "" {
+			sshCfg.PasswordFile = nodeCfg.SSHPasswordFile
+		}
+	}
+
+	if sshCfg.PrivateKey == "" && sshCfg.PrivateKeyFile == "" {
+		if pxCfg.SSHPrivateKeySecretRef != nil {
+			val, err := ResolveSecretSSHString(ctx, d.kclient, pxCfg.SSHPrivateKeySecretRef)
+			if err != nil {
+				return "", sshclient.SSHClientConfig{}, err
+			}
+			sshCfg.PrivateKey = val
+		} else {
+			sshCfg.PrivateKeyFile = pxCfg.SSHPrivateKeyFile
+		}
+	}
+
+	if sshCfg.Password == "" && sshCfg.PasswordFile == "" {
+		if pxCfg.SSHPasswordSecretRef != nil {
+			val, err := ResolveSecretSSHString(ctx, d.kclient, pxCfg.SSHPasswordSecretRef)
+			if err != nil {
+				return "", sshclient.SSHClientConfig{}, err
+			}
+			sshCfg.Password = val
+		} else {
+			sshCfg.PasswordFile = pxCfg.SSHPasswordFile
+		}
+	}
+
+	return host, sshCfg, nil
 }

@@ -81,7 +81,7 @@ storageClass:
     reclaimPolicy: Delete
     fstype: ext4
     cache: writethrough
-    volumeNameNamespaceUUID: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+    uuidNamespace: "6ba7b810-9dad-11d1-80b4-00c04fd430c8" # used for volume and snapshot names
     volumeNameTemplate: '{{ .PVCNamespace }}-{{ .PVCName }}-{{ .PVName }}-{{ .RequestedName }}-{{ .VolumeNameUUID }}'
 ```
 
@@ -132,7 +132,7 @@ helm upgrade -i --namespace=csi-proxmox -f proxmox-csi.yaml \
 | controller.resizer.resources | object | `{"requests":{"cpu":"10m","memory":"16Mi"}}` | Resizer resource requests and limits. ref: https://kubernetes.io/docs/user-guide/compute-resources/ |
 | controller.snapshotter.enabled | bool | `false` |  |
 | controller.snapshotter.image | object | `{"pullPolicy":"IfNotPresent","repository":"registry.k8s.io/sig-storage/csi-snapshotter","tag":"v8.3.0"}` | CSI Snapshotter. refs: https://github.com/kubernetes-csi/external-snapshotter |
-| controller.snapshotter.args | list | `[]` | Snapshotter arguments. example: --feature-gates=CSIVolumeGroupSnapshot=true |
+| controller.snapshotter.args | list | `["--enable-volume-group-snapshots", "--extra-create-metadata"]` | Snapshotter arguments. example: --feature-gates=CSIVolumeGroupSnapshot=true |
 | controller.snapshotter.resources | object | `{"requests":{"cpu":"10m","memory":"16Mi"}}` | Snapshotter resource requests and limits. ref: https://kubernetes.io/docs/user-guide/compute-resources/ |
 | node.plugin.image | object | `{"pullPolicy":"IfNotPresent","repository":"ghcr.io/sergelogvinov/proxmox-csi-node","tag":""}` | Node CSI Driver. |
 | node.plugin.resources | object | `{}` | Node CSI Driver resource requests and limits. ref: https://kubernetes.io/docs/user-guide/compute-resources/ |
