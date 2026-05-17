@@ -23,14 +23,18 @@ clusters:
       namespace: proxmox-csi
       name: proxmox-node-ssh
       key: id_rsa
-    node_host_map:
-      pve-node-1: 10.10.0.11
-      pve-node-2: pve-node-2.example.com
+    node_ssh_options:
+      pve-node-1:
+        host: 10.10.0.11
+        ssh_user: ubuntu
+        ssh_port: 2222
+      pve-node-2:
+        host: pve-node-2.example.com
 ```
 
 SSH authentication can also be configured with `ssh_private_key_file`, `ssh_password_file`, or the matching secret references. The default SSH user is `root` and the default SSH port is `22`.
 
-`node_host_map` is optional, but recommended when the Proxmox node name is not directly resolvable by SSH.
+`node_ssh_options` is optional, but recommended when a Proxmox node needs a different SSH host, user, port, sudo setting, or auth configuration than the cluster-wide defaults.
 
 ## VolumeSnapshotClass
 

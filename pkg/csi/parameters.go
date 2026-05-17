@@ -48,12 +48,6 @@ const (
 
 	// StorageUUIDNamespaceKey is the UUID namespace used for deterministic volume and snapshot names.
 	StorageUUIDNamespaceKey = "uuidNamespace"
-
-	// Provided by external-snapshotter when started with --extra-create-metadata
-	// https://kubernetes-csi.github.io/docs/external-snapshotter.html#volumesnapshot-volumesnapshotcontent-volumegroupsnapshot-and-volumegroupsnapshotcontent-parameters
-	VSNameParamKey        = "csi.storage.k8s.io/volumesnapshot/name"
-	VSNamespaceParamKey   = "csi.storage.k8s.io/volumesnapshot/namespace"
-	VSContentNameParamKey = "csi.storage.k8s.io/volumesnapshotcontent/name"
 )
 
 // StorageParameters contains storage parameters
@@ -108,6 +102,22 @@ type ModifyVolumeParameters struct {
 	SpeedMbps      *int  `json:"diskMBps,omitempty"`
 
 	ReplicateSchedule string `json:"replicateSchedule,omitempty"`
+}
+
+// VolumeSnapshotParameters contains volume snapshot parameters
+//
+// json - tags are used to map the struct to the Kubernetes resource
+// cfg  - tags are used to map the struct to the Proxmox API
+type VolumeSnapshotParameters struct {
+	Zone                    string `json:"zone,omitempty"`
+	NativeZFS               *bool  `json:"nativeZfs,omitempty"`
+	ZFSSnapshotDeletePolicy string `json:"zfsSnapshotDeletePolicy,omitempty"`
+
+	UUIDNamespace               string `json:"uuidNamespace,omitempty"`
+	SnapshotNamePrefix          string `json:"snapshotNamePrefix,omitempty"`
+	SnapshotNameSuffix          string `json:"snapshotNameSuffix,omitempty"`
+	SnapshotNameTemplate        string `json:"snapshotNameTemplate,omitempty"`
+	SnapshotNameTimestampFormat string `json:"snapshotNameTimestampFormat,omitempty"`
 }
 
 // ExtractParameters extracts storage parameters from a map and sets default values.
@@ -173,6 +183,26 @@ func ExtractModifyVolumeParameters(parameters map[string]string) (ModifyVolumePa
 	if p.SpeedMbps != nil && *p.SpeedMbps > 0 {
 		p.ReadSpeedMbps = ptr.Ptr(*p.SpeedMbps)
 		p.WriteSpeedMbps = ptr.Ptr(*p.SpeedMbps)
+	}
+
+	return p, nil
+}
+
+// ExtractVolumeSnapshotParameters extracts volume snapshot parameters from a map and sets default values.
+func ExtractVolumeSnapshotParameters(parameters map[string]string) (VolumeSnapshotParameters, error) {
+	p := VolumeSnapshotParameters{}
+
+	err := unmarshalTag(parameters, &p, "json")
+	if err != nil {
+		return p, err
+	}
+
+	if p.NativeZFS == nil {
+		p.NativeZFS = ptr.Ptr(false)
+	}
+
+	if p.ZFSSnapshotDeletePolicy == "" {
+		p.ZFSSnapshotDeletePolicy = "delete"
 	}
 
 	return p, nil

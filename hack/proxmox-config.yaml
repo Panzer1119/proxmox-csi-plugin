@@ -11,9 +11,13 @@ clusters:
       namespace: proxmox-csi
       name: proxmox-node-ssh
       key: id_rsa
-    node_host_map:
-      pve-node-1: 10.0.0.11
-      pve-node-2: pve-node-2.example.com
+    node_ssh_options:
+      pve-node-1:
+        host: 10.0.0.11
+        ssh_user: root
+        ssh_port: 22
+      pve-node-2:
+        host: pve-node-2.example.com
     uuid_namespace: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
   - url: https://cluster-api-2.example.com:8006/api2/json
     insecure: false

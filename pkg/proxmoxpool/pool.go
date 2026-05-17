@@ -57,14 +57,26 @@ type ProxmoxCluster struct {
 	SSHPort                int           `yaml:"ssh_port,omitempty"`
 	SSHUseSudo             bool          `yaml:"ssh_use_sudo,omitempty"`
 
-	// Optional explicit mapping of Proxmox node name to host/IP for SSH
-	NodeHostMap map[string]string `yaml:"node_host_map,omitempty"`
+	// Optional per-node SSH overrides; fields fall back to the cluster-wide SSH settings when omitted.
+	NodeSSHOptions map[string]*SSHOptions `yaml:"node_ssh_options,omitempty"`
 
 	// Optional UUID namespace for deterministic UUIDv5 snapshot names
 	UUIDNamespace string `yaml:"uuid_namespace,omitempty"`
 
 	// Default timestamp format for snapshot name templates (Go time format)
 	DefaultTimestampFormat string `yaml:"timestamp_format,omitempty"`
+}
+
+// SSHOptions contains per-node SSH settings.
+type SSHOptions struct {
+	Host                   string        `yaml:"host,omitempty"`
+	SSHUser                string        `yaml:"ssh_user,omitempty"`
+	SSHPasswordFile        string        `yaml:"ssh_password_file,omitempty"`
+	SSHPasswordSecretRef   *SecretKeyRef `yaml:"ssh_password_secret_ref,omitempty"`
+	SSHPrivateKeyFile      string        `yaml:"ssh_private_key_file,omitempty"`
+	SSHPrivateKeySecretRef *SecretKeyRef `yaml:"ssh_private_key_secret_ref,omitempty"`
+	SSHPort                int           `yaml:"ssh_port,omitempty"`
+	SSHUseSudo             *bool         `yaml:"ssh_use_sudo,omitempty"`
 }
 
 // SecretKeyRef identifies a key inside a Kubernetes Secret.

@@ -38,6 +38,7 @@ import (
 	"github.com/sergelogvinov/proxmox-csi-plugin/pkg/metrics"
 	pxpool "github.com/sergelogvinov/proxmox-csi-plugin/pkg/proxmoxpool"
 	utilsnode "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/node"
+	snapshot "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/snapshot"
 	volume "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/volume"
 
 	corev1 "k8s.io/api/core/v1"
@@ -171,7 +172,7 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 		if contentSource.GetSnapshot() != nil {
 			snapID := contentSource.GetSnapshot().GetSnapshotId()
 			// try parse as native snapshot id first
-			if _, perr := parseNativeSnapshotID(snapID); perr == nil {
+			if _, perr := snapshot.ParseNativeSnapshotID(snapID); perr == nil {
 				nativeSnapshotID = snapID
 			} else {
 				srcVol, err = volume.NewVolumeFromVolumeID(snapID)
@@ -287,8 +288,14 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 		id = *params.VMID
 	}
 
-	volumeName, err := resolveProvisionedVolumeName(request, params, id)
+	volumeName, err := volume.ResolveProvisionedVolumeName(request.GetName(), request.GetParameters(), volume.NameOptions{
+		Prefix:        params.VolumeNamePrefix,
+		Suffix:        params.VolumeNameSuffix,
+		Template:      params.VolumeNameTemplate,
+		UUIDNamespace: params.UUIDNamespace,
+	}, id)
 	if err != nil {
+		klog.ErrorS(err, "CreateVolume: failed to generate snapshot name")
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
@@ -324,7 +331,12 @@ func (d *ControllerService) CreateVolume(ctx context.Context, request *csi.Creat
 		}
 	}
 
-	volumeName, err = resolveProvisionedVolumeName(request, params, id)
+	volumeName, err = volume.ResolveProvisionedVolumeName(request.GetName(), request.GetParameters(), volume.NameOptions{
+		Prefix:        params.VolumeNamePrefix,
+		Suffix:        params.VolumeNameSuffix,
+		Template:      params.VolumeNameTemplate,
+		UUIDNamespace: params.UUIDNamespace,
+	}, id)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -781,25 +793,9 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 		return nil, status.Error(codes.InvalidArgument, "Name must be provided")
 	}
 
-	params := request.GetParameters()
-	if params == nil {
-		params = map[string]string{}
-	}
-
-	// If uuidNamespace is not provided in the VolumeSnapshotClass parameters,
-	// try to fallback to the uuidNamespace used for the source volume's storage
-	// (stored on the PersistentVolume's CSI volume attributes), and finally to
-	// the cluster-wide configured UUID namespace.
-	if strings.TrimSpace(params[StorageUUIDNamespaceKey]) == "" && d.kclient != nil {
-		if ns, err := d.getPVVolumeAttribute(ctx, vol.VolumeID(), StorageUUIDNamespaceKey); err == nil && strings.TrimSpace(ns) != "" {
-			params[StorageUUIDNamespaceKey] = strings.TrimSpace(ns)
-		}
-	}
-
-	if strings.TrimSpace(params[StorageUUIDNamespaceKey]) == "" {
-		if pxCfg, err := d.pxpool.GetProxmoxClusterConfig(vol.Cluster()); err == nil && pxCfg != nil && strings.TrimSpace(pxCfg.UUIDNamespace) != "" {
-			params[StorageUUIDNamespaceKey] = strings.TrimSpace(pxCfg.UUIDNamespace)
-		}
+	params, err := ExtractVolumeSnapshotParameters(request.GetParameters())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	cl, err := d.pxpool.GetProxmoxCluster(vol.Cluster())
@@ -835,15 +831,11 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 	pxCfg, _ := d.pxpool.GetProxmoxClusterConfig(vol.Cluster())
 	useNative := false
 	if pxCfg != nil && pxCfg.EnableZFSSnapshots {
-		if params["nativeZfs"] == "false" {
-			useNative = false
-		} else {
-			useNative = true
-		}
+		useNative = *params.NativeZFS
 	}
 	if useNative {
 		// call native implementation
-		resp, err := createSnapshotNative(ctx, d, cl, pxCfg, vol, name, params)
+		resp, err := CreateSnapshotNative(ctx, request, d, cl, pxCfg, vol)
 		if err != nil {
 			klog.ErrorS(err, "CreateSnapshot: native snapshot failed", "cluster", vol.Cluster(), "volumeID", vol.VolumeID())
 			return nil, err
@@ -853,18 +845,18 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 
 	snapshotID := vol.CopyVolume(fmt.Sprintf("vm-%d-%s", vmID, name))
 
-	if params["zone"] != "" {
+	if params.Zone != "" {
 		if storageConfig.Nodes != "" {
 			nodes := strings.Split(storageConfig.Nodes, ",")
-			if !slices.Contains(nodes, params["zone"]) {
+			if !slices.Contains(nodes, params.Zone) {
 				err = status.Error(codes.InvalidArgument, "zone specified in parameters is not valid for the storage")
-				klog.ErrorS(err, "CreateSnapshot: invalid zone in parameters", "cluster", vol.Cluster(), "storageID", vol.Storage(), "zone", params["zone"])
+				klog.ErrorS(err, "CreateSnapshot: invalid zone in parameters", "cluster", vol.Cluster(), "storageID", vol.Storage(), "zone", params.Zone)
 
 				return nil, err
 			}
 		}
 
-		snapshotID.SetZone(params["zone"])
+		snapshotID.SetZone(params.Zone)
 	}
 
 	klog.V(5).InfoS("CreateSnapshot", "storageConfig", storageConfig, "snapshotID", snapshotID.VolumeID(), "params", params)
@@ -909,7 +901,7 @@ func (d *ControllerService) CreateSnapshot(ctx context.Context, request *csi.Cre
 func (d *ControllerService) DeleteSnapshot(ctx context.Context, request *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
 	klog.V(4).InfoS("DeleteSnapshot: called", "args", protosanitizer.StripSecrets(request))
 
-	if ref, perr := parseNativeSnapshotID(request.GetSnapshotId()); perr == nil {
+	if ref, perr := snapshot.ParseNativeSnapshotID(request.GetSnapshotId()); perr == nil {
 		resp, err := deleteSnapshotNative(ctx, d, request.GetSnapshotId())
 		if err != nil {
 			klog.ErrorS(err, "DeleteSnapshot: native delete failed", "cluster", ref.Region, "snapshotID", request.GetSnapshotId())

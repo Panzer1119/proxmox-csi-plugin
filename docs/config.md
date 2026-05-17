@@ -38,10 +38,15 @@ clusters:
       name: proxmox-node-ssh
       key: password
 
-    # Optional explicit node -> host/IP/FQDN mapping for SSH
-    node_host_map:
-      pve-node-1: 10.10.0.11
-      pve-node-2: pve-node-2.example.com
+    # Optional per-node SSH overrides. Unset fields fall back to the cluster-wide SSH settings.
+    node_ssh_options:
+      pve-node-1:
+        host: 10.10.0.11
+        ssh_user: ubuntu
+        ssh_port: 2222
+        ssh_use_sudo: true
+      pve-node-2:
+        host: pve-node-2.example.com
 
     # Optional UUID namespace for deterministic native snapshot names
     uuid_namespace: "123e4567-e89b-12d3-a456-426614174000"
@@ -76,7 +81,7 @@ You can define multiple clusters in the `clusters` section.
 * `ssh_private_key_secret_ref` - Kubernetes Secret reference for the SSH private key. Supports `namespace`, `name`, and `key`.
 * `ssh_password_file` - Path to a password file used for SSH auth.
 * `ssh_password_secret_ref` - Kubernetes Secret reference for the SSH password. Supports `namespace`, `name`, and `key`.
-* `node_host_map` - Optional mapping of Proxmox node name to SSH host/IP/FQDN.
+* `node_ssh_options` - Optional mapping of Proxmox node name to SSH settings. Each entry can override `host`, `ssh_user`, `ssh_port`, `ssh_use_sudo`, and the SSH auth fields. Any omitted values fall back to the cluster-wide SSH settings.
 * `uuid_namespace` - Optional UUID namespace used when generating deterministic native snapshot names.
 * `timestamp_format` - Optional Go time format used for the timestamp portion of native snapshot names.
 

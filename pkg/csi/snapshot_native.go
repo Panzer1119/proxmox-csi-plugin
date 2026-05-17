@@ -1,219 +1,36 @@
 package csi
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
-	"text/template"
-	"time"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/google/uuid"
 	goproxmox "github.com/sergelogvinov/go-proxmox"
 	pxpool "github.com/sergelogvinov/proxmox-csi-plugin/pkg/proxmoxpool"
 	sshclient "github.com/sergelogvinov/proxmox-csi-plugin/pkg/ssh"
+	snapshot "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/snapshot"
 	volume "github.com/sergelogvinov/proxmox-csi-plugin/pkg/utils/volume"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 )
 
-type nativeSnapshotID struct {
-	Region   string            `json:"region"`
-	Zone     string            `json:"zone"`
-	Storage  string            `json:"storage"`
-	Dataset  string            `json:"dataset"`
-	Snapshot string            `json:"snapshot"`
-	Metadata map[string]string `json:"metadata,omitempty"`
-}
-
-func (n nativeSnapshotID) String() (string, error) {
-	data, err := json.Marshal(n)
-	if err != nil {
-		return "", err
-	}
-
-	return string(data), nil
-}
-
-func parseNativeSnapshotID(id string) (*nativeSnapshotID, error) {
-	ref := &nativeSnapshotID{}
-	if err := json.Unmarshal([]byte(id), ref); err != nil {
-		return nil, err
-	}
-	if ref.Region == "" || ref.Storage == "" || ref.Dataset == "" || ref.Snapshot == "" {
-		return nil, fmt.Errorf("invalid native snapshot id")
-	}
-	return ref, nil
-}
-
-func nativeUUIDInput(namespace, name string) string {
-	return fmt.Sprintf("%d:%s|%d:%s", len(namespace), namespace, len(name), name)
-}
-
-func nativeUUID(namespace, name string) (uuid.UUID, error) {
-	var ns uuid.UUID
-	var err error
-	if namespace != "" {
-		ns, err = uuid.Parse(namespace)
-		if err != nil {
-			return uuid.Nil, fmt.Errorf("invalid uuid namespace: %w", err)
-		}
-	} else {
-		ns = uuid.NameSpaceOID
-	}
-
-	return uuid.NewSHA1(ns, []byte(name)), nil
-}
-
-// generateSnapshotName renders the template with provided fields and returns the snapshot name.
-func generateSnapshotName(tmplStr, timestampFormat, uuidNamespace, namespace, name string) (string, error) {
-	if tmplStr == "" {
-		tmplStr = "vs-{{ .Timestamp }}-{{ .UUID }}"
-	}
-	if timestampFormat == "" {
-		timestampFormat = "20060102T150405Z"
-	}
-
-	now := time.Now().UTC()
-	ts := now.Format(timestampFormat)
-
-	u, err := nativeUUID(uuidNamespace, nativeUUIDInput(namespace, name))
-	if err != nil {
-		return "", err
-	}
-	data := map[string]string{
-		"Timestamp": ts,
-		"UUID":      u.String(),
-		"Namespace": namespace,
-		"Name":      name,
-	}
-
-	tmpl, err := template.New("snapname").Parse(tmplStr)
-	if err != nil {
-		return "", fmt.Errorf("failed parse template: %w", err)
-	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed render template: %w", err)
-	}
-
-	res := buf.String()
-	// basic sanitize: no whitespace
-	if strings.ContainsAny(res, " \t\n") {
-		return "", fmt.Errorf("snapshot name contains whitespace")
-	}
-	return res, nil
-}
-
-// computeHoldTag creates a deterministic full-length hold tag from namespace/name.
-// It uses the same UUID namespace as snapshot name generation so hold tags are
-// consistent with snapshot UUIDs when a custom UUID namespace is configured.
-func computeHoldTag(uuidNamespace, namespace, name string) string {
-	u, err := nativeUUID(uuidNamespace, nativeUUIDInput(namespace, name))
-	if err != nil {
-		// fallback to sha1 when UUID namespace parsing fails
-		h := sha1.Sum([]byte(namespace + "/" + name))
-		return "pvecsi-" + hex.EncodeToString(h[:])
-	}
-	return "pvecsi-" + u.String()
-}
-
-func resolveSecretString(ctx context.Context, kclient kubernetes.Interface, ref *pxpool.SecretKeyRef) (string, error) {
-	if ref == nil || ref.Name == "" {
-		return "", nil
-	}
-	if kclient == nil {
-		return "", fmt.Errorf("kubernetes client is required to resolve secret reference %s", ref.Name)
-	}
-
-	namespace := ref.Namespace
-	if namespace == "" {
-		namespace = "default"
-	}
-
-	secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	if err != nil {
-		return "", err
-	}
-	if len(secret.Data) == 0 {
-		return "", fmt.Errorf("secret %s/%s has no data", namespace, ref.Name)
-	}
-
-	if ref.Key != "" {
-		if val, ok := secret.Data[ref.Key]; ok {
-			return strings.TrimSpace(string(val)), nil
-		}
-		return "", fmt.Errorf("secret %s/%s does not contain key %q", namespace, ref.Name, ref.Key)
-	}
-
-	if val, ok := secret.Data["ssh-privatekey"]; ok {
-		return strings.TrimSpace(string(val)), nil
-	}
-	if val, ok := secret.Data["password"]; ok {
-		return strings.TrimSpace(string(val)), nil
-	}
-	for _, val := range secret.Data {
-		return strings.TrimSpace(string(val)), nil
-	}
-
-	return "", fmt.Errorf("secret %s/%s does not contain usable data", namespace, ref.Name)
-}
-
-func buildSSHClientConfig(ctx context.Context, d *ControllerService, pxCfg *pxpool.ProxmoxCluster) (sshclient.SSHClientConfig, error) {
-	sshCfg := sshclient.SSHClientConfig{}
-	if pxCfg != nil {
-		sshCfg.User = "root"
-		return sshCfg, nil
-	}
-
-	cfg := *pxCfg
-	sshCfg.User = cfg.SSHUser
-	if sshCfg.User == "" {
-		sshCfg.User = "root"
-	}
-	sshCfg.Port = cfg.SSHPort
-	sshCfg.UseSudo = cfg.SSHUseSudo
-
-	if cfg.SSHPrivateKeySecretRef != nil {
-		val, err := resolveSecretString(ctx, d.kclient, cfg.SSHPrivateKeySecretRef)
-		if err != nil {
-			return sshclient.SSHClientConfig{}, err
-		}
-		sshCfg.PrivateKey = val
-	} else {
-		sshCfg.PrivateKeyFile = cfg.SSHPrivateKeyFile
-	}
-
-	if cfg.SSHPasswordSecretRef != nil {
-		val, err := resolveSecretString(ctx, d.kclient, cfg.SSHPasswordSecretRef)
-		if err != nil {
-			return sshclient.SSHClientConfig{}, err
-		}
-		sshCfg.Password = val
-	} else {
-		sshCfg.PasswordFile = cfg.SSHPasswordFile
-	}
-
-	return sshCfg, nil
-}
-
-// createSnapshotNative implements the native ZFS snapshot creation path.
-func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxmox.APIClient, pxCfg *pxpool.ProxmoxCluster, vol *volume.Volume, reqName string, params map[string]string) (*csi.CreateSnapshotResponse, error) {
+// CreateSnapshotNative implements the native ZFS snapshot creation path.
+func CreateSnapshotNative(ctx context.Context, request *csi.CreateSnapshotRequest, d *ControllerService, cl *goproxmox.APIClient, pxCfg *pxpool.ProxmoxCluster, vol *volume.Volume) (*csi.CreateSnapshotResponse, error) {
 	// get storage config
 	storageConfig, err := cl.Client.ClusterStorage(ctx, vol.Storage())
 	if err != nil {
-		klog.ErrorS(err, "createSnapshotNative: failed to get proxmox storage config", "cluster", vol.Cluster(), "storageID", vol.Storage())
+		klog.ErrorS(err, "CreateSnapshotNative: failed to get proxmox storage config", "cluster", vol.Cluster(), "storageID", vol.Storage())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+
+	params, err := ExtractVolumeSnapshotParameters(request.GetParameters())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	// detect storage type and pool via reflection to be resilient against client struct differences
 	var storageType string
 	var rootPool string
@@ -259,27 +76,15 @@ func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxm
 		node = nodes[0]
 	}
 
-	// resolve host for SSH
-	host := node
-	if pxCfg != nil && pxCfg.NodeHostMap != nil {
-		if h, ok := pxCfg.NodeHostMap[node]; ok && h != "" {
-			host = h
-		}
-	}
-
-	sshCfgInput := pxCfg
-	if sshCfgInput == nil {
-		sshCfgInput = &pxpool.ProxmoxCluster{}
-	}
-	sshCfg, err := buildSSHClientConfig(ctx, d, sshCfgInput)
+	host, sshCfg, err := buildSSHClientConfig(ctx, d, pxCfg, node)
 	if err != nil {
-		klog.ErrorS(err, "createSnapshotNative: failed to build ssh config")
+		klog.ErrorS(err, "CreateSnapshotNative: failed to build ssh config")
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	client, err := sshclient.NewSSHClient(host, sshCfg)
 	if err != nil {
-		klog.ErrorS(err, "createSnapshotNative: failed to create ssh client", "host", host)
+		klog.ErrorS(err, "CreateSnapshotNative: failed to create ssh client", "host", host)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
@@ -300,7 +105,7 @@ func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxm
 		search := fmt.Sprintf("zfs list -H -t volume -r '%s' -o name | grep -F '%s' || true", rootPool, diskNoFmt)
 		out2, _, err2 := client.Run(ctx, search)
 		if err2 != nil || strings.TrimSpace(out2) == "" {
-			klog.InfoS("createSnapshotNative: dataset not found via ssh", "candidate", candidate, "searchOut", out2, "err", err2)
+			klog.InfoS("CreateSnapshotNative: dataset not found via ssh", "candidate", candidate, "searchOut", out2, "err", err2)
 			return nil, status.Error(codes.NotFound, "zfs dataset for volume not found")
 		}
 		// take first match
@@ -308,57 +113,44 @@ func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxm
 		candidate = strings.TrimSpace(lines[0])
 	}
 
-	snapshotTemplate := params["zfsSnapshotNameTemplate"]
-	timestampFormat := params["zfsTimestampFormat"]
-	if timestampFormat == "" && pxCfg != nil && pxCfg.DefaultTimestampFormat != "" {
-		timestampFormat = pxCfg.DefaultTimestampFormat
+	timestampFormat := params.SnapshotNameTimestampFormat
+	if timestampFormat == "" {
+		if pxCfg != nil && pxCfg.DefaultTimestampFormat != "" {
+			timestampFormat = pxCfg.DefaultTimestampFormat
+		} else {
+			timestampFormat = "20060102T150405Z"
+		}
 	}
 
-	// Allow metadata injected by the external-snapshotter (--extra-create-metadata)
-	// as well as the internal vsNamespace/vsName keys. Prefer explicit params in
-	// the following order: internal vs* keys, then csi.storage.k8s.io/* keys,
-	// then request name.
-	vsNamespace := strings.TrimSpace(params[VSNamespaceParamKey])
-	vsName := strings.TrimSpace(params[VSNameParamKey])
-	if vsName == "" {
-		vsName = strings.TrimSpace(params[VSContentNameParamKey])
-	}
-	if vsName == "" {
-		vsName = reqName
-	}
-
-	uuidNs := strings.TrimSpace(params[StorageUUIDNamespaceKey])
-	if uuidNs == "" && pxCfg != nil {
-		uuidNs = pxCfg.UUIDNamespace
-	}
-
-	snapName, err := generateSnapshotName(snapshotTemplate, timestampFormat, uuidNs, vsNamespace, vsName)
+	snapshotName, holdTag, err := snapshot.GenerateSnapshotName(request.GetName(), request.GetParameters(), snapshot.NameOptions{
+		Prefix:          params.SnapshotNamePrefix,
+		Suffix:          params.SnapshotNameSuffix,
+		Template:        params.SnapshotNameTemplate,
+		UUIDNamespace:   params.UUIDNamespace,
+		TimestampFormat: timestampFormat,
+	})
 	if err != nil {
-		klog.ErrorS(err, "createSnapshotNative: failed to generate snapshot name")
+		klog.ErrorS(err, "CreateSnapshotNative: failed to generate snapshot name")
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	fullSnap := fmt.Sprintf("%s@%s", candidate, snapName)
-	createCmd := fmt.Sprintf("zfs snapshot '%s'", fullSnap)
+	fullSnapshotName := fmt.Sprintf("%s@%s", candidate, snapshotName)
+	createCmd := fmt.Sprintf("zfs snapshot '%s'", fullSnapshotName)
 	if _, stderr, err := client.Run(ctx, createCmd); err != nil {
-		klog.ErrorS(err, "createSnapshotNative: zfs snapshot failed", "cmd", createCmd, "stderr", stderr)
+		klog.ErrorS(err, "CreateSnapshotNative: zfs snapshot failed", "cmd", createCmd, "stderr", stderr)
 		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to create zfs snapshot: %v", err))
 	}
 
-	policy := params["zfsSnapshotDeletePolicy"]
-	if policy == "" {
-		policy = "delete"
-	}
+	policy := params.ZFSSnapshotDeletePolicy
 
-	holdTag := ""
 	if policy == "release" || policy == "release-destroy" {
-		// compute hold tag using the same UUID namespace as snapshot names
-		holdTag = computeHoldTag(uuidNs, vsNamespace, vsName)
-		holdCmd := fmt.Sprintf("zfs hold %s '%s'", holdTag, fullSnap)
+		holdCmd := fmt.Sprintf("zfs hold %s '%s'", holdTag, fullSnapshotName)
 		if _, stderr, err := client.Run(ctx, holdCmd); err != nil {
-			klog.ErrorS(err, "createSnapshotNative: zfs hold failed", "cmd", holdCmd, "stderr", stderr)
+			klog.ErrorS(err, "CreateSnapshotNative: zfs hold failed", "cmd", holdCmd, "stderr", stderr)
 			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to hold zfs snapshot: %v", err))
 		}
+	} else {
+		holdTag = ""
 	}
 
 	zone := vol.Zone()
@@ -366,23 +158,23 @@ func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxm
 		zone = node
 	}
 
-	id, err := (nativeSnapshotID{
+	id, err := (snapshot.NativeSnapshotID{
 		Region:   vol.Cluster(),
 		Zone:     zone,
 		Storage:  vol.Storage(),
 		Dataset:  candidate,
-		Snapshot: snapName,
+		Snapshot: snapshotName,
 		Metadata: map[string]string{"policy": policy, "hold": holdTag},
 	}).String()
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	klog.V(3).InfoS("createSnapshotNative: snapshot created", "snapshotID", id, "dataset@snapshot", fullSnap)
+	klog.V(3).InfoS("CreateSnapshotNative: snapshot created", "snapshotID", id, "dataset@snapshot", fullSnapshotName)
 
 	return &csi.CreateSnapshotResponse{
 		Snapshot: &csi.Snapshot{
-			CreationTime:   timestamppbNow(),
+			CreationTime:   snapshot.NowTimestamp(),
 			SnapshotId:     id,
 			SourceVolumeId: vol.VolumeID(),
 			SizeBytes:      0,
@@ -393,7 +185,7 @@ func createSnapshotNative(ctx context.Context, d *ControllerService, cl *goproxm
 
 // deleteSnapshotNative implements native deletion honoring policy/hold metadata in the SnapshotId payload.
 func deleteSnapshotNative(ctx context.Context, d *ControllerService, snapshotID string) (*csi.DeleteSnapshotResponse, error) {
-	ref, err := parseNativeSnapshotID(snapshotID)
+	ref, err := snapshot.ParseNativeSnapshotID(snapshotID)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid native snapshot id")
 	}
@@ -417,18 +209,7 @@ func deleteSnapshotNative(ctx context.Context, d *ControllerService, snapshotID 
 		return nil, status.Error(codes.Internal, "cannot determine node for dataset")
 	}
 
-	host := node
-	if pxCfg != nil && pxCfg.NodeHostMap != nil {
-		if h, ok := pxCfg.NodeHostMap[node]; ok && h != "" {
-			host = h
-		}
-	}
-
-	sshCfgInput := pxCfg
-	if sshCfgInput == nil {
-		sshCfgInput = &pxpool.ProxmoxCluster{}
-	}
-	sshCfg, err := buildSSHClientConfig(ctx, d, sshCfgInput)
+	host, sshCfg, err := buildSSHClientConfig(ctx, d, pxCfg, node)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -526,18 +307,7 @@ func listSnapshotsNative(ctx context.Context, d *ControllerService, cl *goproxmo
 		return nil, status.Error(codes.Internal, "failed to determine node for storage")
 	}
 	node := nodes[0]
-	host := node
-	if pxCfg != nil && pxCfg.NodeHostMap != nil {
-		if h, ok := pxCfg.NodeHostMap[node]; ok && h != "" {
-			host = h
-		}
-	}
-
-	sshCfgInput := pxCfg
-	if sshCfgInput == nil {
-		sshCfgInput = &pxpool.ProxmoxCluster{}
-	}
-	sshCfg, err := buildSSHClientConfig(ctx, d, sshCfgInput)
+	host, sshCfg, err := buildSSHClientConfig(ctx, d, pxCfg, node)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -573,7 +343,7 @@ func listSnapshotsNative(ctx context.Context, d *ControllerService, cl *goproxmo
 		if zone == "" {
 			zone = node
 		}
-		ref := nativeSnapshotID{
+		ref := snapshot.NativeSnapshotID{
 			Region:   vol.Cluster(),
 			Zone:     zone,
 			Storage:  vol.Storage(),
@@ -588,7 +358,7 @@ func listSnapshotsNative(ctx context.Context, d *ControllerService, cl *goproxmo
 			Snapshot: &csi.Snapshot{
 				SnapshotId:     id,
 				SourceVolumeId: "",
-				CreationTime:   timestamppbNow(),
+				CreationTime:   snapshot.NowTimestamp(),
 				ReadyToUse:     true,
 			},
 		})
@@ -597,14 +367,9 @@ func listSnapshotsNative(ctx context.Context, d *ControllerService, cl *goproxmo
 	return &csi.ListSnapshotsResponse{Entries: entries}, nil
 }
 
-// helper to return current timestamppb
-func timestamppbNow() *timestamppb.Timestamp {
-	return &timestamppb.Timestamp{Seconds: time.Now().Unix(), Nanos: int32(time.Now().Nanosecond())}
-}
-
 // createVolumeFromNativeSnapshot performs zfs clone on the storage to create a new dataset for the volume
 func createVolumeFromNativeSnapshot(ctx context.Context, d *ControllerService, cl *goproxmox.APIClient, pxCfg *pxpool.ProxmoxCluster, srcSnapshotID string, dest *volume.Volume) error {
-	ref, err := parseNativeSnapshotID(srcSnapshotID)
+	ref, err := snapshot.ParseNativeSnapshotID(srcSnapshotID)
 	if err != nil {
 		return err
 	}
@@ -656,18 +421,7 @@ func createVolumeFromNativeSnapshot(ctx context.Context, d *ControllerService, c
 		}
 		node = nodes[0]
 	}
-	host := node
-	if pxCfg != nil && pxCfg.NodeHostMap != nil {
-		if h, ok := pxCfg.NodeHostMap[node]; ok && h != "" {
-			host = h
-		}
-	}
-
-	sshCfgInput := pxCfg
-	if sshCfgInput == nil {
-		sshCfgInput = &pxpool.ProxmoxCluster{}
-	}
-	sshCfg, err := buildSSHClientConfig(ctx, d, sshCfgInput)
+	host, sshCfg, err := buildSSHClientConfig(ctx, d, pxCfg, node)
 	if err != nil {
 		return err
 	}
