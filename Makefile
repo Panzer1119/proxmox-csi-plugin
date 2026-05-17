@@ -1,5 +1,5 @@
 REGISTRY ?= ghcr.io
-USERNAME ?= sergelogvinov
+USERNAME ?= Panzer1119
 USERNAME_LOWER := $(shell echo $(USERNAME) | tr '[:upper:]' '[:lower:]')
 OCIREPO ?= $(REGISTRY)/$(USERNAME_LOWER)
 HELMREPO ?= $(REGISTRY)/$(USERNAME_LOWER)/charts
