@@ -197,6 +197,7 @@ controller:
     # -- Snapshotter arguments.
     # example: --feature-gates=CSIVolumeGroupSnapshot=true
     args:
+      - --enable-volume-group-snapshots
       - --extra-create-metadata
     # -- Snapshotter resource requests and limits.
     # ref: https://kubernetes.io/docs/user-guide/compute-resources/
