@@ -190,15 +190,13 @@ func ExtractModifyVolumeParameters(parameters map[string]string) (ModifyVolumePa
 
 // ExtractVolumeSnapshotParameters extracts volume snapshot parameters from a map and sets default values.
 func ExtractVolumeSnapshotParameters(parameters map[string]string) (VolumeSnapshotParameters, error) {
-	p := VolumeSnapshotParameters{}
+	p := VolumeSnapshotParameters{
+		NativeZFS: ptr.Ptr(false),
+	}
 
 	err := unmarshalTag(parameters, &p, "json")
 	if err != nil {
 		return p, err
-	}
-
-	if p.NativeZFS == nil {
-		p.NativeZFS = ptr.Ptr(false)
 	}
 
 	if p.ZFSSnapshotDeletePolicy == "" {
