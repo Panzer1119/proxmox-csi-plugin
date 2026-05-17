@@ -202,7 +202,7 @@ func ExtractVolumeSnapshotParameters(parameters map[string]string) (VolumeSnapsh
 	}
 
 	if p.ZFSSnapshotDeletePolicy == "" {
-		p.ZFSSnapshotDeletePolicy = "delete"
+		p.ZFSSnapshotDeletePolicy = "Delete"
 	}
 
 	return p, nil

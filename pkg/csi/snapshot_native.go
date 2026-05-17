@@ -143,7 +143,7 @@ func CreateSnapshotNative(ctx context.Context, request *csi.CreateSnapshotReques
 
 	policy := params.ZFSSnapshotDeletePolicy
 
-	if policy == "release" || policy == "release-destroy" {
+	if policy == "Release" || policy == "ReleaseDelete" {
 		holdCmd := fmt.Sprintf("zfs hold %s '%s'", holdTag, fullSnapshotName)
 		if _, stderr, err := client.Run(ctx, holdCmd); err != nil {
 			klog.ErrorS(err, "CreateSnapshotNative: zfs hold failed", "cmd", holdCmd, "stderr", stderr)
@@ -219,7 +219,7 @@ func deleteSnapshotNative(ctx context.Context, d *ControllerService, snapshotID 
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	policy := "delete"
+	policy := "Delete"
 	holdTag := ""
 	if ref.Metadata != nil {
 		if v := ref.Metadata["policy"]; v != "" {
@@ -232,7 +232,7 @@ func deleteSnapshotNative(ctx context.Context, d *ControllerService, snapshotID 
 	snapshotRef := fmt.Sprintf("%s@%s", ref.Dataset, ref.Snapshot)
 
 	switch policy {
-	case "delete":
+	case "Delete":
 		cmd := fmt.Sprintf("zfs destroy '%s'", snapshotRef)
 		if _, stderr, err := client.Run(ctx, cmd); err != nil {
 			// if not found, return success
@@ -241,7 +241,7 @@ func deleteSnapshotNative(ctx context.Context, d *ControllerService, snapshotID 
 			}
 			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to destroy snapshot: %v", err))
 		}
-	case "release":
+	case "Release":
 		if holdTag == "" {
 			return nil, status.Error(codes.InvalidArgument, "hold tag missing for release policy")
 		}
@@ -252,7 +252,7 @@ func deleteSnapshotNative(ctx context.Context, d *ControllerService, snapshotID 
 			}
 			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to release hold: %v", err))
 		}
-	case "release-destroy":
+	case "ReleaseDelete":
 		if holdTag == "" {
 			return nil, status.Error(codes.InvalidArgument, "hold tag missing for release-destroy policy")
 		}
