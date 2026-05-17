@@ -74,6 +74,7 @@ services:
       - "--worker-threads=1"
       - "--csi-address=unix:///csi/csi.sock"
       - "--leader-election=false"
+      - "--extra-create-metadata"
       - "--kubeconfig=/etc/kubernetes/kubeconfig"
     volumes:
       - type: volume
